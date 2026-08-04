@@ -1,0 +1,1 @@
+"""EduAgent Hub application package."""

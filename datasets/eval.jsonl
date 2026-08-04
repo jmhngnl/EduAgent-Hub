@@ -1,0 +1,3 @@
+{"question":"申请实验室 GPU 资源通常需要提交哪些信息？","expected_keywords":["GPU"]}
+{"question":"涉及患者数据时，文档中要求注意什么？","expected_keywords":["脱敏"]}
+{"question":"计算 (12 + 8) * 3","expected_keywords":["60"]}

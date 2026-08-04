@@ -1,0 +1,17 @@
+.env
+
+__pycache__/
+*.pyc
+
+node_modules/
+dist/
+
+postgres_data/
+redis_data/
+
+uploads/
+
+*.log
+
+.idea/
+.vscode/

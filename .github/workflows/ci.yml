@@ -1,0 +1,40 @@
+name: EduAgent Hub CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Tests
+        env:
+          MOCK_LLM: "true"
+          DATABASE_URL: "postgresql://invalid:invalid@127.0.0.1:1/invalid"
+          REDIS_URL: "redis://127.0.0.1:1/0"
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and build
+        run: |
+          npm install
+          npm run build
