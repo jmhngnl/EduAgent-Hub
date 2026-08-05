@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, AsyncIterator
+from urllib.parse import urlparse
 
 from celery.result import AsyncResult
 from fastapi import (
@@ -49,6 +50,7 @@ from app.schemas import (
     IngestResponse,
     IntentRequest,
     IntentResult,
+    PlatformStatusResponse,
     SearchResponse,
     SearchResult,
     TaskStatusResponse,
@@ -181,7 +183,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="EduAgent Hub API",
-    version="1.0.0",
+    version="1.1.0",
     description="Production-oriented LangGraph Agent and hybrid RAG platform.",
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
@@ -216,6 +218,34 @@ async def health(request: Request) -> HealthResponse:
         database=database,
         redis=redis_status,
         timestamp=datetime.now(UTC),
+    )
+
+
+@app.get(
+    "/v1/platform/status",
+    response_model=PlatformStatusResponse,
+    tags=["platform"],
+)
+async def platform_status(request: Request) -> PlatformStatusResponse:
+    settings: Settings = request.app.state.settings
+    provider = settings.llm_provider.strip().lower()
+    if not provider or provider == "auto":
+        provider = urlparse(settings.llm_base_url).netloc or "custom"
+    return PlatformStatusResponse(
+        service=settings.app_name,
+        environment=settings.environment,
+        auth_enabled=bool(settings.parsed_api_keys or settings.parsed_api_key_workspaces),
+        llm_mode="mock" if settings.mock_llm else "remote",
+        llm_provider=provider,
+        llm_model=settings.llm_model,
+        llm_configured=settings.mock_llm or bool(settings.llm_api_key),
+        embeddings_mode=(
+            "deterministic" if settings.mock_embeddings else "remote"
+        ),
+        embedding_model=settings.embedding_model,
+        embedding_configured=(
+            settings.mock_embeddings or bool(settings.embedding_api_key)
+        ),
     )
 
 
@@ -375,6 +405,18 @@ async def chat(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("Agent configuration error")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Agent request failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Upstream model request failed. Check the server-side LLM_* "
+                "configuration and provider account status."
+            ),
+        ) from exc
 
 
 @app.post(

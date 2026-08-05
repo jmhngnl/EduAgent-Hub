@@ -447,22 +447,15 @@ class AgentService:
                         "data": {"name": str(event.get("name", "unknown"))},
                     }
         except Exception:
-            logger.exception("Streaming failed; falling back to non-stream chat")
-            result = await self.chat(
-                message=message,
-                session_id=session_id,
-                workspace_id=workspace_id,
-            )
-            yield {"type": "token", "data": result.answer}
+            logger.exception("Streaming model request failed")
             yield {
-                "type": "done",
+                "type": "error",
                 "data": {
-                    "session_id": session_id,
-                    "citations": [
-                        citation.model_dump() for citation in result.citations
-                    ],
-                    "tool_calls": result.tool_calls,
-                    "guarded": result.guarded,
+                    "message": (
+                        "模型服务调用失败。请在服务器 .env 中检查 MOCK_LLM、"
+                        "LLM_API_KEY、LLM_BASE_URL 和 LLM_MODEL；浏览器中的"
+                        " X-API-Key 仅用于访问 EduAgent Hub 后端。"
+                    )
                 },
             }
             return

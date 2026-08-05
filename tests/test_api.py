@@ -56,3 +56,16 @@ def test_workspace_binding_rejects_cross_workspace_access() -> None:
         assert response.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_platform_status_does_not_expose_secrets() -> None:
+    with TestClient(app) as client:
+        response = client.get("/v1/platform/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["llm_mode"] in {"mock", "remote"}
+    assert body["embeddings_mode"] in {"deterministic", "remote"}
+    serialized = response.text.lower()
+    assert "api_key" not in serialized
+    assert "secret" not in serialized

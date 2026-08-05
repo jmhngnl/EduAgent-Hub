@@ -7,18 +7,31 @@ type Citation = {
   score: number;
 };
 
+type PlatformStatus = {
+  service: string;
+  environment: string;
+  auth_enabled: boolean;
+  llm_mode: "mock" | "remote";
+  llm_provider: string;
+  llm_model: string;
+  llm_configured: boolean;
+  embeddings_mode: "deterministic" | "remote";
+  embedding_model: string;
+  embedding_configured: boolean;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app element");
-};
+}
 
-const defaultApiBase = "http://localhost:8000";
+const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`;
 const apiBase = localStorage.getItem("eduagentApiBase") ?? defaultApiBase;
 const apiKey = localStorage.getItem("eduagentApiKey") ?? "";
 
 
 /**
- * 创建会话ID
+ * 创建会话 ID
  *
  * crypto.randomUUID:
  * - HTTPS环境支持
@@ -34,11 +47,8 @@ function createSessionId(): string {
     return crypto.randomUUID();
   }
 
-  return `${Date.now()}-${Math.random()
-    .toString(36)
-    .substring(2, 15)}`;
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 }
-
 
 const sessionId =
   localStorage.getItem("eduagentSessionId") ?? createSessionId();
@@ -109,18 +119,25 @@ app.innerHTML = `
 
   <dialog id="settingsDialog">
     <form method="dialog" class="settings-form">
-      <h2>连接设置</h2>
+      <h2>EduAgent 后端连接设置</h2>
+      <p class="settings-hint">
+        这里连接的是你部署的 FastAPI 后端，不是 DeepSeek。模型 API Key 只能写在服务器
+        <code>.env</code> 中，不能粘贴到浏览器。
+      </p>
       <label>
-        API Base
+        EduAgent API Base
         <input id="apiBaseInput" value="${escapeHtml(apiBase)}" />
+        <small>例如：${escapeHtml(defaultApiBase)}</small>
       </label>
       <label>
-        X-API-Key
+        项目访问密钥（X-API-Key）
         <input id="apiKeyInput" type="password" value="${escapeHtml(apiKey)}" />
+        <small>填写服务器 <code>API_KEYS</code> 中的值；不要填写 DeepSeek 的 <code>sk-...</code>。</small>
       </label>
+      <p class="settings-error" id="settingsError" role="alert"></p>
       <div class="dialog-actions">
         <button value="cancel" class="ghost">取消</button>
-        <button value="save" id="saveSettings">保存</button>
+        <button type="button" id="saveSettings">保存并检测</button>
       </div>
     </form>
   </dialog>
@@ -138,6 +155,53 @@ function escapeHtml(value: string): string {
         "'": "&#039;",
       })[char] ?? char,
   );
+}
+
+function validateConnectionSettings(base: string, key: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    return "后端地址格式不正确，应类似 http://192.168.150.101:8000";
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return "后端地址必须使用 http:// 或 https://";
+  }
+
+  const providerHosts = [
+    "api.deepseek.com",
+    "api.openai.com",
+    "dashscope.aliyuncs.com",
+  ];
+  if (providerHosts.includes(parsed.hostname)) {
+    return "这里必须填写 EduAgent FastAPI 地址，不能填写模型提供商地址。";
+  }
+
+  if (key.startsWith("sk-")) {
+    return "这里填写项目访问密钥 API_KEYS，不是 DeepSeek/OpenAI 模型密钥。";
+  }
+
+  return null;
+}
+
+async function responseError(response: Response): Promise<string> {
+  const raw = await response.text();
+  let detail = raw;
+  try {
+    const payload = JSON.parse(raw) as { detail?: string };
+    detail = payload.detail ?? raw;
+  } catch {
+    // Keep plain-text response.
+  }
+
+  if (response.status === 401) {
+    return "项目访问密钥无效。请填写服务器 API_KEYS 中的值，不要使用模型 API Key。";
+  }
+  if (response.status === 404) {
+    return "接口不存在。请确认 API Base 指向 EduAgent FastAPI（通常为 :8000），而不是 DeepSeek。";
+  }
+  return `HTTP ${response.status}${detail ? `: ${detail}` : ""}`;
 }
 
 function headers(contentType = true): HeadersInit {
@@ -201,14 +265,29 @@ function renderCitations(items: Citation[]): void {
 async function checkHealth(): Promise<void> {
   const target = document.querySelector<HTMLDivElement>("#health");
   if (!target) return;
+
+  target.classList.remove("ok", "warn", "error");
   try {
-    const response = await fetch(`${currentBase()}/health`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    target.textContent = `${data.status} · DB ${data.database} · Redis ${data.redis}`;
-    target.classList.add(data.status === "ok" ? "ok" : "warn");
+    const base = currentBase();
+    const healthResponse = await fetch(`${base}/health`);
+    if (!healthResponse.ok) {
+      throw new Error(await responseError(healthResponse));
+    }
+    const health = await healthResponse.json();
+
+    const statusResponse = await fetch(`${base}/v1/platform/status`);
+    const platform = statusResponse.ok
+      ? ((await statusResponse.json()) as PlatformStatus)
+      : null;
+
+    const llmLabel = platform
+      ? `LLM ${platform.llm_mode === "mock" ? "Mock" : platform.llm_model}`
+      : "LLM 状态未知";
+    target.textContent = `${health.status} · DB ${health.database} · Redis ${health.redis} · ${llmLabel}`;
+    target.classList.add(health.status === "ok" ? "ok" : "warn");
   } catch (error) {
-    target.textContent = `服务不可用：${String(error)}`;
+    const message = error instanceof Error ? error.message : String(error);
+    target.textContent = `服务不可用：${message}`;
     target.classList.add("error");
   }
 }
@@ -241,7 +320,11 @@ async function ingestText(): Promise<void> {
     });
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(JSON.stringify(payload));
+      throw new Error(
+        response.status === 401
+          ? "项目访问密钥无效，请检查连接设置中的 X-API-Key。"
+          : JSON.stringify(payload),
+      );
     }
     result.textContent = JSON.stringify(payload, null, 2);
   } catch (error) {
@@ -279,7 +362,7 @@ async function sendMessage(): Promise<void> {
       }),
     });
     if (!response.ok || !response.body) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      throw new Error(await responseError(response));
     }
 
     const reader = response.body.getReader();
@@ -317,6 +400,10 @@ async function sendMessage(): Promise<void> {
         if (event === "done") {
           renderCitations((data.citations ?? []) as Citation[]);
         }
+        if (event === "error") {
+          const message = String(data.message ?? "模型服务调用失败");
+          paragraph.textContent = message;
+        }
       }
     }
   } catch (error) {
@@ -351,13 +438,23 @@ document
   .querySelector<HTMLButtonElement>("#saveSettings")
   ?.addEventListener("click", () => {
     const base =
-      document.querySelector<HTMLInputElement>("#apiBaseInput")?.value.trim() ??
+      document.querySelector<HTMLInputElement>("#apiBaseInput")?.value.trim() ||
       defaultApiBase;
     const key =
       document.querySelector<HTMLInputElement>("#apiKeyInput")?.value.trim() ??
       "";
-    localStorage.setItem("eduagentApiBase", base);
+    const errorTarget =
+      document.querySelector<HTMLParagraphElement>("#settingsError");
+    const validationError = validateConnectionSettings(base, key);
+
+    if (validationError) {
+      if (errorTarget) errorTarget.textContent = validationError;
+      return;
+    }
+
+    localStorage.setItem("eduagentApiBase", base.replace(/\/$/, ""));
     localStorage.setItem("eduagentApiKey", key);
+    dialog?.close();
     window.location.reload();
   });
 

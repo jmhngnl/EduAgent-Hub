@@ -10,7 +10,7 @@
 
 | 招聘关键词 | 本项目实现 |
 |---|---|
-| 大模型 API 接入 | OpenAI-compatible Chat/Embedding Provider，可切换 OpenAI、通义、DeepSeek 等兼容服务 |
+| 大模型 API 接入 | Chat 与 Embedding Provider 独立配置，可组合 DeepSeek Chat、OpenAI-compatible Embedding 或本地确定性 Embedding |
 | Prompt 设计 | 角色、租户边界、拒答原则、引用规则、工具白名单 |
 | 结构化输出 | Pydantic `IntentResult` + `with_structured_output` |
 | Agent | LangGraph 状态图、ToolNode、条件路由、循环调用、流式事件 |
@@ -65,6 +65,7 @@ Agent 不是“一次 Prompt 调用”，而是一个可控状态机：
 
 - pgvector cosine distance 向量召回；
 - PostgreSQL `tsvector` 全文召回，并用 `pg_trgm` 补充中文和模糊关键词匹配；
+- Chat 模型与 Embedding 服务分离配置，避免将模型提供商地址误作前端后端地址；
 - Reciprocal Rank Fusion 合并两路排名；
 - API Key 可绑定固定 `workspace_id`，检索 SQL 再执行租户过滤；
 - 返回 `document_id`、`source`、`chunk_id` 和分数。
@@ -146,17 +147,45 @@ API_KEY_WORKSPACES=demo-key:demo
 
 ### 接入真实模型
 
+模型提供商密钥只允许配置在服务器 `.env` 中。浏览器“连接设置”填写的是 EduAgent Hub 后端地址与项目访问密钥，不是模型地址和模型 Key。
+
+DeepSeek Chat + 本地演示 Embedding：
+
+```bash
+cp .env.deepseek.example .env
+```
+
 ```env
+API_KEYS=demo
+API_KEY_WORKSPACES=demo:demo
+
 MOCK_LLM=false
-LLM_API_KEY=your-key
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4.1-mini
+LLM_PROVIDER=deepseek
+LLM_API_KEY=your-deepseek-key
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-v4-flash
+LLM_THINKING_ENABLED=false
+
+MOCK_EMBEDDINGS=true
+```
+
+前端连接设置：
+
+```text
+EduAgent API Base = http://服务器IP:8000
+项目访问密钥       = demo
+```
+
+需要接入真实 Embedding 服务时，再独立配置：
+
+```env
+MOCK_EMBEDDINGS=false
+EMBEDDING_API_KEY=your-embedding-key
+EMBEDDING_BASE_URL=https://your-embedding-provider.example/v1
 EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-对于支持 OpenAI API 规范的服务，只需调整 `LLM_BASE_URL`、模型名称和 Key。
-
-> 数据库迁移默认使用 `VECTOR(1536)`。更换不同维度的 Embedding 模型时，需要同步修改 `EMBEDDING_DIMENSION` 和 `migrations/init.sql`。
+> 数据库迁移默认使用 `VECTOR(1536)`。更换不同维度的 Embedding 模型时，需要同步修改 `EMBEDDING_DIMENSION` 和 `migrations/init.sql`。完整步骤见 `docs/DEEPSEEK_SETUP.md`。
 
 ## 六、本地开发
 
@@ -184,6 +213,7 @@ npm run dev
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 服务健康检查 |
+| GET | `/v1/platform/status` | 查看安全的模型/Embedding 配置状态，不返回密钥 |
 | POST | `/v1/knowledge/text` | 文本切块、Embedding 与入库 |
 | POST | `/v1/knowledge/files` | 上传 PDF/TXT/Markdown 并提交 Celery |
 | GET | `/v1/tasks/{task_id}` | 查询异步任务状态 |
@@ -239,7 +269,23 @@ uv run python scripts/evaluate.py --dataset datasets/eval.jsonl
 - Prompt injection rejection rate
 - Token cost per successful task
 
-## 十、简历表述
+## 十、常见连接错误
+
+- 页面显示 `HTTP 401`：连接设置中的 X-API-Key 应填写 `.env` 的 `API_KEYS`，不能填写 DeepSeek Key。
+- 页面显示 `HTTP 404`：API Base 很可能错误地填写成模型提供商地址，应改为 `http://服务器IP:8000`。
+- 修改 `.env` 后没有生效：必须重新创建 API/Worker 容器：
+
+```bash
+docker-compose up -d --build --force-recreate api worker frontend
+```
+
+- 安全检查：
+
+```bash
+curl http://127.0.0.1:8000/v1/platform/status
+```
+
+## 十一、简历表述
 
 **EduAgent Hub｜教育知识库与工作流智能体平台**
 
@@ -248,7 +294,7 @@ uv run python scripts/evaluate.py --dataset datasets/eval.jsonl
 - 基于 MCP 封装知识检索与业务工具，实现 Agent 与外部系统的标准化联通；使用 Celery + Redis 异步处理大文件索引任务。
 - 建立离线评估、Prometheus/OpenTelemetry 可观测接入及 Docker Compose、GitHub Actions 交付流程，支持模型、Prompt 和检索策略持续迭代。
 
-## 十一、不要在面试中夸大的部分
+## 十二、不要在面试中夸大的部分
 
 当前仓库提供的是完整工程骨架和可运行 Demo。简历中不应声称已经拥有真实学校生产数据、百万级文档、线上高并发或大规模用户指标，除非后续确实进行了压测和真实部署。建议在完成真实模型接入后补充：
 

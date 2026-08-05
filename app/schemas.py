@@ -13,6 +13,19 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
+class PlatformStatusResponse(BaseModel):
+    service: str
+    environment: str
+    auth_enabled: bool
+    llm_mode: Literal["mock", "remote"]
+    llm_provider: str
+    llm_model: str
+    llm_configured: bool
+    embeddings_mode: Literal["deterministic", "remote"]
+    embedding_model: str
+    embedding_configured: bool
+
+
 class TextIngestRequest(BaseModel):
     workspace_id: str = Field(default="demo", min_length=1, max_length=100)
     document_id: str = Field(min_length=1, max_length=200)

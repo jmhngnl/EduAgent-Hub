@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+
 from langchain_core.embeddings import Embeddings
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.config import Settings
@@ -57,26 +60,58 @@ class ModelFactory:
         self.settings = settings
 
     def embeddings(self) -> Embeddings:
-        if self.settings.mock_llm:
+        if self.settings.mock_embeddings:
             return DeterministicEmbeddings(self.settings.embedding_dimension)
 
-        if not self.settings.llm_api_key:
-            raise RuntimeError("LLM_API_KEY is required when MOCK_LLM=false")
+        if not self.settings.embedding_api_key:
+            raise RuntimeError(
+                "EMBEDDING_API_KEY is required when MOCK_EMBEDDINGS=false"
+            )
+
+        if self.settings.embedding_base_url:
+            return OpenAIEmbeddings(
+                model=self.settings.embedding_model,
+                api_key=self.settings.embedding_api_key,
+                base_url=self.settings.embedding_base_url,
+                max_retries=self.settings.llm_max_retries,
+                request_timeout=self.settings.llm_timeout_seconds,
+            )
 
         return OpenAIEmbeddings(
             model=self.settings.embedding_model,
-            api_key=self.settings.llm_api_key,
-            base_url=self.settings.llm_base_url,
+            api_key=self.settings.embedding_api_key,
             max_retries=self.settings.llm_max_retries,
             request_timeout=self.settings.llm_timeout_seconds,
         )
 
-    def chat_model(self) -> ChatOpenAI:
+    def _resolved_chat_provider(self) -> str:
+        configured = self.settings.llm_provider.strip().lower()
+        if configured and configured != "auto":
+            return configured
+        if "deepseek" in self.settings.llm_base_url.lower():
+            return "deepseek"
+        return "openai-compatible"
+
+    def chat_model(self) -> BaseChatModel:
         if self.settings.mock_llm:
             raise RuntimeError("Chat model is unavailable in MOCK_LLM mode")
 
         if not self.settings.llm_api_key:
             raise RuntimeError("LLM_API_KEY is required when MOCK_LLM=false")
+
+        if self._resolved_chat_provider() == "deepseek":
+            thinking_type = (
+                "enabled" if self.settings.llm_thinking_enabled else "disabled"
+            )
+            return ChatDeepSeek(
+                model=self.settings.llm_model,
+                api_key=self.settings.llm_api_key,
+                api_base=self.settings.llm_base_url,
+                timeout=self.settings.llm_timeout_seconds,
+                max_retries=self.settings.llm_max_retries,
+                temperature=0.1,
+                extra_body={"thinking": {"type": thinking_type}},
+            )
 
         return ChatOpenAI(
             model=self.settings.llm_model,

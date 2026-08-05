@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
 
-    # Comma-separated API keys. Leave empty only for local development.
+    # Application access keys used by the browser/client to call EduAgent Hub.
+    # These are NOT model-provider API keys.
     api_keys: str = ""
     # Optional key-to-workspace mapping: "key-a:workspace-a,key-b:workspace-b".
     api_key_workspaces: str = ""
@@ -27,14 +28,24 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
 
+    # Chat model configuration. Keep provider credentials on the server only.
     mock_llm: bool = True
+    llm_provider: str = "auto"
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4.1-mini"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    llm_thinking_enabled: bool = False
     llm_timeout_seconds: float = 45.0
     llm_max_retries: int = 2
+
+    # Embeddings are configured independently from the chat model so that an
+    # OpenAI-compatible chat provider can be paired with another embedding
+    # provider (or the deterministic local demo embedding implementation).
+    mock_embeddings: bool = True
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     chunk_size: int = 800
     chunk_overlap: int = 120

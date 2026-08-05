@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "eduagent-hub"
-version = "1.0.0"
+version = "1.1.0"
 description = "Production-oriented LangGraph Agent and hybrid RAG platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,7 @@ dependencies = [
   "celery>=5.4,<6",
   "fastapi>=0.115,<1",
   "langchain>=1.0,<2",
+  "langchain-deepseek>=1.1,<2",
   "langchain-openai>=1.0,<2",
   "langchain-text-splitters>=1.0,<2",
   "langgraph>=1.0,<2",
