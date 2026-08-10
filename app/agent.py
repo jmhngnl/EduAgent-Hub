@@ -20,6 +20,8 @@ from app.llm import ModelFactory
 from app.prompts import build_agent_system_prompt
 from app.rag import KnowledgeStore, RetrievedChunk
 from app.schemas import ChatResponse, Citation
+from app.skills.registry import SkillRegistry
+from app.tools.paper_search import PaperSearchClient
 
 logger = logging.getLogger(__name__)
 
@@ -203,17 +205,29 @@ class AgentService:
         self.knowledge = knowledge
         self.conversations = conversations
         self.model_factory = ModelFactory(settings)
+        self.paper_search = PaperSearchClient(settings)
+        self.skills = SkillRegistry(settings.skills_dir)
 
-    def _build_graph(self, *, workspace_id: str, context: str):
+    def _build_graph(
+        self,
+        *,
+        workspace_id: str,
+        context: str,
+        message: str,
+    ):
         model = self.model_factory.chat_model()
 
         @tool
-        async def search_knowledge(query: str) -> str:
+        async def search_knowledge(
+            query: str,
+            document_id: str | None = None,
+        ) -> str:
             """Search the current workspace knowledge base for grounded evidence."""
             chunks = await self.knowledge.search(
                 workspace_id=workspace_id,
                 query=query,
                 top_k=self.settings.retrieval_top_k,
+                document_id=document_id,
             )
             payload = [
                 {
@@ -227,6 +241,102 @@ class AgentService:
             return json.dumps(payload, ensure_ascii=False)
 
         @tool
+        async def search_academic_papers(
+            query: str,
+            year_from: int | None = None,
+            year_to: int | None = None,
+            limit: int = 5,
+        ) -> str:
+            """Search Semantic Scholar for paper metadata and abstracts.
+
+            Use this for literature discovery/recommendation. The returned abstract and
+            metadata are NOT evidence for detailed experimental numbers.
+            """
+            try:
+                papers = await self.paper_search.search(
+                    query=query,
+                    year_from=year_from,
+                    year_to=year_to,
+                    limit=limit,
+                )
+            except Exception as exc:
+                logger.warning("Academic paper search failed: %s", exc)
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"paper_search_failed: {type(exc).__name__}: {str(exc)[:900]}",
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps(
+                {"status": "ok", "count": len(papers), "papers": papers},
+                ensure_ascii=False,
+            )
+
+        @tool
+        async def read_paper_evidence(
+            document_id: str,
+            focus: str = "背景 方法 创新 数据集 指标 消融 局限",
+        ) -> str:
+            """Collect grounded evidence from an uploaded paper PDF by document_id.
+
+            Use this before giving a deep paper reading. It runs several targeted RAG
+            searches within only the requested document and returns deduplicated chunks.
+            """
+            queries = [
+                focus,
+                "研究背景 动机 problem motivation related work limitation",
+                "method architecture framework module loss objective training inference",
+                "dataset data split baseline metric result table experiment comparison",
+                "ablation analysis limitation failure case discussion conclusion",
+            ]
+            evidence: dict[str, RetrievedChunk] = {}
+            for query in queries:
+                chunks = await self.knowledge.search(
+                    workspace_id=workspace_id,
+                    query=query,
+                    top_k=min(4, self.settings.retrieval_top_k),
+                    document_id=document_id,
+                )
+                for chunk in chunks:
+                    evidence.setdefault(chunk.id, chunk)
+                if len(evidence) >= 12:
+                    break
+
+            selected = list(evidence.values())[:12]
+            if not selected:
+                return json.dumps(
+                    {
+                        "status": "not_found",
+                        "document_id": document_id,
+                        "message": (
+                            "当前 workspace 未检索到该 document_id 的论文内容。"
+                            "请先通过 /v1/knowledge/files 上传 PDF，并确认 Celery 入库完成。"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
+            payload = [
+                {
+                    "evidence_id": f"论文证据{index}",
+                    "source": item.source,
+                    "document_id": item.document_id,
+                    "content": item.content,
+                    "score": item.score,
+                }
+                for index, item in enumerate(selected, start=1)
+            ]
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "document_id": document_id,
+                    "evidence": payload,
+                },
+                ensure_ascii=False,
+            )
+
+        @tool
         def safe_calculator(expression: str) -> str:
             """Calculate a basic arithmetic expression without executing code."""
             try:
@@ -234,10 +344,19 @@ class AgentService:
             except (SyntaxError, ZeroDivisionError, UnsafeExpressionError) as exc:
                 return f"calculation_error: {exc}"
 
-        tools = [search_knowledge, safe_calculator]
+        tools = [
+            search_knowledge,
+            search_academic_papers,
+            read_paper_evidence,
+            safe_calculator,
+        ]
         bound_model = model.bind_tools(tools)
         system_message = SystemMessage(
-            content=build_agent_system_prompt(context=context, workspace_id=workspace_id)
+            content=build_agent_system_prompt(
+                context=context,
+                workspace_id=workspace_id,
+                skill_instructions=self.skills.instructions_for(message),
+            )
         )
 
         async def assistant(state: MessagesState) -> dict[str, list[AIMessage]]:
@@ -336,7 +455,11 @@ class AgentService:
                 )
                 tool_calls = ["search_knowledge"]
         else:
-            graph = self._build_graph(workspace_id=workspace_id, context=context)
+            graph = self._build_graph(
+                workspace_id=workspace_id,
+                context=context,
+                message=message,
+            )
             messages = [
                 *await self._history_messages(session_id),
                 HumanMessage(content=message),
@@ -411,7 +534,11 @@ class AgentService:
             message=message,
         )
         context = _context_block(chunks)
-        graph = self._build_graph(workspace_id=workspace_id, context=context)
+        graph = self._build_graph(
+            workspace_id=workspace_id,
+            context=context,
+            message=message,
+        )
         messages = [
             *await self._history_messages(session_id),
             HumanMessage(content=message),

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 45.0
     llm_max_retries: int = 2
 
+    # Academic paper discovery + local skill instructions.
+    semantic_scholar_api_key: str = ""
+    paper_search_timeout_seconds: float = 20.0
+    paper_search_max_results: int = 8
+    skills_dir: str = "skills"
+
     # Embeddings are configured independently from the chat model so that an
     # OpenAI-compatible chat provider can be paired with another embedding
     # provider (or the deterministic local demo embedding implementation).

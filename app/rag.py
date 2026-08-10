@@ -128,6 +128,7 @@ class InMemoryKnowledgeStore:
         workspace_id: str,
         query: str,
         top_k: int,
+        document_id: str | None = None,
     ) -> list[RetrievedChunk]:
         query_vector = await self.embeddings.aembed_query(query)
         query_terms = set(query.lower().split())
@@ -135,6 +136,8 @@ class InMemoryKnowledgeStore:
 
         for row in self.rows:
             if row["workspace_id"] != workspace_id:
+                continue
+            if document_id is not None and row["document_id"] != document_id:
                 continue
             vector_score = sum(
                 a * b for a, b in zip(query_vector, row["embedding"], strict=True)
@@ -270,6 +273,7 @@ class PostgresKnowledgeStore:
         workspace_id: str,
         query: str,
         top_k: int,
+        document_id: str | None = None,
     ) -> list[RetrievedChunk]:
         pool = self._require_pool()
         vector = await self.embeddings.aembed_query(query)
@@ -282,12 +286,14 @@ class PostgresKnowledgeStore:
                    1 - (embedding <=> ($2::text)::vector) AS score
             FROM knowledge_chunks
             WHERE workspace_id = $1
+              AND ($4::text IS NULL OR document_id = $4)
             ORDER BY embedding <=> ($2::text)::vector
             LIMIT $3
             """,
             workspace_id,
             vector_literal,
             candidates,
+            document_id,
         )
 
         lexical_rows = await pool.fetch(
@@ -302,6 +308,7 @@ class PostgresKnowledgeStore:
                    ) AS score
             FROM knowledge_chunks
             WHERE workspace_id = $1
+              AND ($4::text IS NULL OR document_id = $4)
               AND (
                   search_vector @@ websearch_to_tsquery('simple', $2)
                   OR similarity(content, $2) > 0.05
@@ -313,6 +320,7 @@ class PostgresKnowledgeStore:
             workspace_id,
             query,
             candidates,
+            document_id,
         )
 
         vector_ranked = [

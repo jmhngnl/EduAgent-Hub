@@ -1,0 +1,165 @@
+diff --git a/app/agent.py b/app/agent.py
+index fff1be8..b81bea5 100644
+--- a/app/agent.py
++++ b/app/agent.py
+@@ -264,7 +264,7 @@ class AgentService:
+                 return json.dumps(
+                     {
+                         "status": "error",
+-                        "message": f"paper_search_failed: {type(exc).__name__}",
++                        "message": f"paper_search_failed: {type(exc).__name__}: {str(exc)[:900]}",
+                     },
+                     ensure_ascii=False,
+                 )
+diff --git a/app/tools/paper_search.py b/app/tools/paper_search.py
+index 604a7ad..0561a50 100644
+--- a/app/tools/paper_search.py
++++ b/app/tools/paper_search.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import asyncio
+ from typing import Any
+ 
+ import httpx
+@@ -7,7 +8,10 @@ import httpx
+ from app.config import Settings
+ 
+ 
+-SEMANTIC_SCHOLAR_SEARCH_URL = (
++SEMANTIC_SCHOLAR_BULK_SEARCH_URL = (
++    "https://api.semanticscholar.org/graph/v1/paper/search/bulk"
++)
++SEMANTIC_SCHOLAR_RELEVANCE_SEARCH_URL = (
+     "https://api.semanticscholar.org/graph/v1/paper/search"
+ )
+ SEMANTIC_SCHOLAR_FIELDS = ",".join(
+@@ -27,6 +31,10 @@ SEMANTIC_SCHOLAR_FIELDS = ",".join(
+ )
+ 
+ 
++class PaperSearchError(RuntimeError):
++    """Actionable paper-search failure exposed to the Agent tool."""
++
++
+ def normalize_semantic_scholar_paper(item: dict[str, Any]) -> dict[str, Any]:
+     """Normalize a Semantic Scholar record into a stable tool payload."""
+ 
+@@ -58,11 +66,71 @@ def normalize_semantic_scholar_paper(item: dict[str, Any]) -> dict[str, Any]:
+ 
+ 
+ class PaperSearchClient:
+-    """Small async Semantic Scholar client used by the paper-search tool."""
++    """Async Semantic Scholar client used by the paper-search Agent tool.
++
++    Bulk search is preferred because Semantic Scholar documents it as the
++    lower-cost endpoint for ordinary keyword discovery. If bulk search is
++    unavailable, the client falls back once to relevance search.
++    """
+ 
+     def __init__(self, settings: Settings) -> None:
+         self.settings = settings
+ 
++    def _headers(self) -> dict[str, str]:
++        headers = {
++            "User-Agent": "EduAgent-Hub/1.2 paper-research",
++            "Accept": "application/json",
++        }
++        if self.settings.semantic_scholar_api_key:
++            headers["x-api-key"] = self.settings.semantic_scholar_api_key
++        return headers
++
++    @staticmethod
++    def _error_message(response: httpx.Response) -> str:
++        body = response.text.strip().replace("\n", " ")[:500]
++        suffix = f" body={body}" if body else ""
++        if response.status_code == 429:
++            return (
++                "Semantic Scholar HTTP 429: rate limited. Configure "
++                "SEMANTIC_SCHOLAR_API_KEY and retry after a short delay."
++                f"{suffix}"
++            )
++        if response.status_code in {401, 403}:
++            return (
++                f"Semantic Scholar HTTP {response.status_code}: authentication/"
++                "access rejected. Check SEMANTIC_SCHOLAR_API_KEY and whether "
++                "the server can access api.semanticscholar.org."
++                f"{suffix}"
++            )
++        return f"Semantic Scholar HTTP {response.status_code}.{suffix}"
++
++    async def _request(
++        self,
++        client: httpx.AsyncClient,
++        *,
++        url: str,
++        params: dict[str, str | int],
++    ) -> dict[str, Any]:
++        response = await client.get(url, params=params, headers=self._headers())
++        if response.status_code == 429:
++            retry_after = response.headers.get("retry-after")
++            delay = 1.2
++            if retry_after:
++                try:
++                    delay = min(max(float(retry_after), 0.5), 5.0)
++                except ValueError:
++                    pass
++            await asyncio.sleep(delay)
++            response = await client.get(url, params=params, headers=self._headers())
++
++        if response.is_error:
++            raise PaperSearchError(self._error_message(response))
++
++        payload = response.json()
++        if not isinstance(payload, dict):
++            raise PaperSearchError("Semantic Scholar returned a non-object JSON payload")
++        return payload
++
+     async def search(
+         self,
+         *,
+@@ -88,21 +156,31 @@ class PaperSearchClient:
+             end = str(year_to) if year_to is not None else ""
+             params["year"] = f"{start}-{end}"
+ 
+-        headers = {"User-Agent": "EduAgent-Hub/1.2 paper-research"}
+-        if self.settings.semantic_scholar_api_key:
+-            headers["x-api-key"] = self.settings.semantic_scholar_api_key
+-
+         timeout = httpx.Timeout(self.settings.paper_search_timeout_seconds)
+         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+-            response = await client.get(
+-                SEMANTIC_SCHOLAR_SEARCH_URL,
+-                params=params,
+-                headers=headers,
+-            )
+-            response.raise_for_status()
+-            payload = response.json()
+-
+-        data = payload.get("data") if isinstance(payload, dict) else None
++            errors: list[str] = []
++            payload: dict[str, Any] | None = None
++            for url in (
++                SEMANTIC_SCHOLAR_BULK_SEARCH_URL,
++                SEMANTIC_SCHOLAR_RELEVANCE_SEARCH_URL,
++            ):
++                try:
++                    payload = await self._request(client, url=url, params=params)
++                    break
++                except PaperSearchError as exc:
++                    errors.append(str(exc))
++                except httpx.TimeoutException as exc:
++                    errors.append(f"Semantic Scholar timeout: {type(exc).__name__}")
++                except httpx.RequestError as exc:
++                    errors.append(
++                        "Semantic Scholar network error: "
++                        f"{type(exc).__name__}: {str(exc)[:300]}"
++                    )
++
++            if payload is None:
++                raise PaperSearchError(" | ".join(errors) or "Paper search failed")
++
++        data = payload.get("data")
+         if not isinstance(data, list):
+             return []
+         return [

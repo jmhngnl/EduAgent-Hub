@@ -15,6 +15,7 @@ COPY app ./app
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY datasets ./datasets
+COPY skills ./skills
 
 RUN python -m pip install \
     --no-cache-dir \
