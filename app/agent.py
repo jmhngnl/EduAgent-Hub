@@ -20,7 +20,7 @@ from app.llm import ModelFactory
 from app.prompts import build_agent_system_prompt
 from app.rag import KnowledgeStore, RetrievedChunk
 from app.schemas import ChatResponse, Citation
-from app.skills.registry import SkillRegistry
+from app.skills.registry import SkillRegistry, is_paper_request
 from app.tools.paper_search import PaperSearchClient
 
 logger = logging.getLogger(__name__)
@@ -222,12 +222,13 @@ class AgentService:
             query: str,
             document_id: str | None = None,
         ) -> str:
-            """Search the current workspace knowledge base for grounded evidence."""
+            """Search non-paper workspace documents for grounded business evidence."""
             chunks = await self.knowledge.search(
                 workspace_id=workspace_id,
                 query=query,
                 top_k=self.settings.retrieval_top_k,
                 document_id=document_id,
+                document_type="lab_document",
             )
             payload = [
                 {
@@ -297,6 +298,7 @@ class AgentService:
                     query=query,
                     top_k=min(4, self.settings.retrieval_top_k),
                     document_id=document_id,
+                    document_type="paper",
                 )
                 for chunk in chunks:
                     evidence.setdefault(chunk.id, chunk)
@@ -391,10 +393,12 @@ class AgentService:
         workspace_id: str,
         message: str,
     ) -> list[RetrievedChunk]:
+        document_type = "paper" if is_paper_request(message) else "lab_document"
         return await self.knowledge.search(
             workspace_id=workspace_id,
             query=message,
             top_k=self.settings.retrieval_top_k,
+            document_type=document_type,
         )
 
     async def chat(

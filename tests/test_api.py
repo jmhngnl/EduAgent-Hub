@@ -14,32 +14,43 @@ def test_health_endpoint() -> None:
 
 
 def test_text_ingestion_and_mock_chat() -> None:
-    with TestClient(app) as client:
-        ingest = client.post(
-            "/v1/knowledge/text",
-            json={
-                "workspace_id": "demo",
-                "document_id": "test-policy",
-                "source": "test-policy.md",
-                "text": "GPU 资源申请需要说明用途和预计使用时长，并由导师审批。",
-                "metadata": {"test": True},
-            },
-        )
-        assert ingest.status_code == 200
+    app.dependency_overrides[authenticate] = lambda: AuthContext(
+        api_key="test-key",
+        workspace_id="demo",
+    )
 
-        chat = client.post(
-            "/v1/chat",
-            json={
-                "message": "GPU 申请需要什么？",
-                "session_id": "pytest-session",
-                "workspace_id": "demo",
-            },
-        )
+    try:
+        with TestClient(app) as client:
+            ingest = client.post(
+                "/v1/knowledge/text",
+                json={
+                    "workspace_id": "demo",
+                    "document_id": "test-policy",
+                    "source": "test-policy.md",
+                    "text": "GPU 资源申请需要说明用途和预计使用时长，并由导师审批。",
+                    "metadata": {
+                        "test": True,
+                        "document_type": "lab_document",
+                    },
+                },
+            )
+            assert ingest.status_code == 200
 
-    assert chat.status_code == 200
-    payload = chat.json()
-    assert "GPU" in payload["answer"]
-    assert payload["citations"]
+            chat = client.post(
+                "/v1/chat",
+                json={
+                    "message": "GPU 申请需要什么？",
+                    "session_id": "pytest-session",
+                    "workspace_id": "demo",
+                },
+            )
+
+        assert chat.status_code == 200
+        payload = chat.json()
+        assert "GPU" in payload["answer"]
+        assert payload["citations"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_workspace_binding_rejects_cross_workspace_access() -> None:

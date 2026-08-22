@@ -46,6 +46,9 @@ from app.rag import InMemoryKnowledgeStore, PostgresKnowledgeStore
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    DocumentListResponse,
+    DocumentSummary,
+    DocumentType,
     HealthResponse,
     IngestResponse,
     IntentRequest,
@@ -260,17 +263,19 @@ async def ingest_text(
     auth: Annotated[AuthContext, Depends(authenticate)],
 ) -> IngestResponse:
     enforce_workspace(auth, payload.workspace_id)
+    metadata = {**payload.metadata, "document_type": payload.document_type}
     count = await request.app.state.knowledge.ingest_text(
         workspace_id=payload.workspace_id,
         document_id=payload.document_id,
         source=payload.source,
         text=payload.text,
-        metadata=payload.metadata,
+        metadata=metadata,
     )
     return IngestResponse(
         document_id=payload.document_id,
         chunks_indexed=count,
         status="indexed",
+        document_type=payload.document_type,
     )
 
 
@@ -286,6 +291,7 @@ async def ingest_file(
     file: Annotated[UploadFile, File()],
     workspace_id: Annotated[str, Form()] = "demo",
     document_id: Annotated[str | None, Form()] = None,
+    document_type: Annotated[DocumentType, Form()] = "lab_document",
 ) -> IngestResponse:
     settings: Settings = request.app.state.settings
     enforce_workspace(auth, workspace_id)
@@ -326,13 +332,17 @@ async def ingest_file(
         workspace_id=workspace_id,
         document_id=resolved_document_id,
         source=file.filename or resolved_document_id,
-        metadata={"content_type": file.content_type or "application/octet-stream"},
+        metadata={
+            "content_type": file.content_type or "application/octet-stream",
+            "document_type": document_type,
+        },
     )
     return IngestResponse(
         document_id=resolved_document_id,
         chunks_indexed=0,
         status="queued",
         task_id=task.id,
+        document_type=document_type,
     )
 
 
@@ -362,12 +372,14 @@ async def search_knowledge(
     query: Annotated[str, Query(min_length=1)],
     workspace_id: str = "demo",
     top_k: Annotated[int, Query(ge=1, le=20)] = 6,
+    document_type: Annotated[DocumentType | None, Query()] = None,
 ) -> SearchResponse:
     enforce_workspace(auth, workspace_id)
     results = await request.app.state.knowledge.search(
         workspace_id=workspace_id,
         query=query,
         top_k=top_k,
+        document_type=document_type,
     )
     return SearchResponse(
         query=query,
@@ -382,6 +394,38 @@ async def search_knowledge(
                 metadata=item.metadata,
             )
             for item in results
+        ],
+    )
+
+
+@app.get(
+    "/v1/knowledge/documents",
+    response_model=DocumentListResponse,
+    tags=["knowledge"],
+)
+async def list_knowledge_documents(
+    request: Request,
+    auth: Annotated[AuthContext, Depends(authenticate)],
+    workspace_id: str = "demo",
+    document_type: Annotated[DocumentType | None, Query()] = None,
+) -> DocumentListResponse:
+    enforce_workspace(auth, workspace_id)
+    documents = await request.app.state.knowledge.list_documents(
+        workspace_id=workspace_id,
+        document_type=document_type,
+    )
+    return DocumentListResponse(
+        workspace_id=workspace_id,
+        document_type=document_type,
+        documents=[
+            DocumentSummary(
+                document_id=item.document_id,
+                source=item.source,
+                document_type=item.document_type,
+                chunk_count=item.chunk_count,
+                metadata=item.metadata,
+            )
+            for item in documents
         ],
     )
 

@@ -2,6 +2,15 @@
 
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
 
 node_modules/
 dist/
@@ -15,3 +24,13 @@ uploads/
 
 .idea/
 .vscode/
+
+# Local patches and merge/reject artifacts. Keep hotfix files out of commits.
+*.patch
+*.diff
+*.rej
+*.orig
+
+# One-off papers used for local ingestion/debugging at repository root.
+# PDFs intentionally stored under a subdirectory can still be versioned.
+/*.pdf

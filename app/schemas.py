@@ -4,6 +4,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+DocumentType = Literal["lab_document", "paper"]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     service: str
@@ -31,6 +34,7 @@ class TextIngestRequest(BaseModel):
     document_id: str = Field(min_length=1, max_length=200)
     source: str = Field(min_length=1, max_length=500)
     text: str = Field(min_length=1)
+    document_type: DocumentType = "lab_document"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -39,6 +43,7 @@ class IngestResponse(BaseModel):
     chunks_indexed: int
     status: Literal["indexed", "queued"] = "indexed"
     task_id: str | None = None
+    document_type: DocumentType = "lab_document"
 
 
 class SearchResult(BaseModel):
@@ -54,6 +59,20 @@ class SearchResponse(BaseModel):
     query: str
     workspace_id: str
     results: list[SearchResult]
+
+
+class DocumentSummary(BaseModel):
+    document_id: str
+    source: str
+    document_type: DocumentType
+    chunk_count: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentListResponse(BaseModel):
+    workspace_id: str
+    document_type: DocumentType | None = None
+    documents: list[DocumentSummary]
 
 
 class Citation(BaseModel):
