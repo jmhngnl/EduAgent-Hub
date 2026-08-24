@@ -1,5 +1,6 @@
 package com.eduagent.platform.common;
 
+import com.eduagent.platform.knowledge.KnowledgeUpstreamException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +33,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), request.getRequestURI());
+    }
+
+    @ExceptionHandler(KnowledgeUpstreamException.class)
+    public ResponseEntity<Map<String, Object>> handleKnowledgeUpstream(KnowledgeUpstreamException ex, HttpServletRequest request) {
+        return error(HttpStatus.BAD_GATEWAY, ex.getMessage(), request.getRequestURI());
     }
 
     private ResponseEntity<Map<String, Object>> error(HttpStatus status, String message, String path) {

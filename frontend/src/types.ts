@@ -62,3 +62,48 @@ export type StreamHandlers = {
   onDone?: (data: DoneEvent) => void;
   onError?: (message: string) => void;
 };
+
+export type DocumentType = "lab_document" | "paper";
+
+export type KnowledgeDocument = {
+  document_id: string;
+  source: string;
+  document_type: DocumentType;
+  chunk_count: number;
+  metadata: Record<string, unknown>;
+};
+
+export type DocumentListResponse = {
+  workspace_id: string;
+  document_type: DocumentType | null;
+  documents: KnowledgeDocument[];
+};
+
+export type IngestResponse = {
+  document_id: string;
+  chunks_indexed: number;
+  status: "indexed" | "queued";
+  task_id: string | null;
+  document_type: DocumentType;
+};
+
+export type TaskStatusResponse = {
+  task_id: string;
+  state: string;
+  result: unknown | null;
+};
+
+export type KnowledgeSearchResult = {
+  id: string;
+  document_id: string;
+  source: string;
+  content: string;
+  score: number;
+  metadata: Record<string, unknown>;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  workspace_id: string;
+  results: KnowledgeSearchResult[];
+};

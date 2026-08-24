@@ -1,9 +1,14 @@
 import type {
   ChatMessage,
   Conversation,
+  DocumentListResponse,
+  DocumentType,
   DoneEvent,
+  IngestResponse,
+  KnowledgeSearchResponse,
   RouteEvent,
   StreamHandlers,
+  TaskStatusResponse,
   ToolEvent,
 } from "../types";
 
@@ -151,4 +156,75 @@ export async function streamMessage(
 
   buffer += decoder.decode();
   if (buffer.trim()) consumeSseBlock(buffer, handlers);
+}
+
+
+export function listDocuments(
+  workspaceId = "demo",
+  documentType?: DocumentType | "all",
+): Promise<DocumentListResponse> {
+  const params = new URLSearchParams({ workspaceId });
+  if (documentType && documentType !== "all") params.set("documentType", documentType);
+  return jsonRequest(`/documents?${params.toString()}`);
+}
+
+export async function uploadDocument(input: {
+  file: File;
+  workspaceId?: string;
+  documentId?: string;
+  documentType: DocumentType;
+}): Promise<IngestResponse> {
+  const form = new FormData();
+  form.set("file", input.file);
+  form.set("workspaceId", input.workspaceId ?? "demo");
+  form.set("documentType", input.documentType);
+  if (input.documentId?.trim()) form.set("documentId", input.documentId.trim());
+
+  const response = await fetch(`${API_BASE}/documents/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) throw new Error(await errorText(response));
+  return (await response.json()) as IngestResponse;
+}
+
+export function ingestTextDocument(input: {
+  workspaceId?: string;
+  documentId: string;
+  source: string;
+  text: string;
+  documentType: DocumentType;
+}): Promise<IngestResponse> {
+  return jsonRequest("/documents/text", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: input.workspaceId ?? "demo",
+      document_id: input.documentId,
+      source: input.source,
+      text: input.text,
+      document_type: input.documentType,
+      metadata: {},
+    }),
+  });
+}
+
+export function getDocumentTask(taskId: string): Promise<TaskStatusResponse> {
+  return jsonRequest(`/document-tasks/${encodeURIComponent(taskId)}`);
+}
+
+export function searchKnowledge(input: {
+  workspaceId?: string;
+  query: string;
+  documentType?: DocumentType | "all";
+  topK?: number;
+}): Promise<KnowledgeSearchResponse> {
+  const params = new URLSearchParams({
+    workspaceId: input.workspaceId ?? "demo",
+    query: input.query,
+    topK: String(input.topK ?? 6),
+  });
+  if (input.documentType && input.documentType !== "all") {
+    params.set("documentType", input.documentType);
+  }
+  return jsonRequest(`/knowledge/search?${params.toString()}`);
 }

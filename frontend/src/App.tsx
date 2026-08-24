@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { Conversation } from "./types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createConversation, deleteConversation, listConversations } from "./api/platform";
 import { ChatPane } from "./components/ChatPane";
-import { Sidebar } from "./components/Sidebar";
+import { DocumentCenter } from "./components/DocumentCenter";
+import { DocumentGuidePanel } from "./components/DocumentGuidePanel";
+import { Sidebar, type WorkspaceView } from "./components/Sidebar";
 import { TracePanel } from "./components/TracePanel";
 import { useUiStore } from "./store/useUiStore";
 
@@ -11,6 +13,7 @@ const EMPTY_CONVERSATIONS: Conversation[] = [];
 
 export function App() {
   const queryClient = useQueryClient();
+  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
   const selectedId = useUiStore((state) => state.selectedConversationId);
   const setSelectedId = useUiStore((state) => state.setSelectedConversationId);
   const resetTrace = useUiStore((state) => state.resetTrace);
@@ -27,10 +30,7 @@ export function App() {
     setSelectedId(conversations[0]?.id ?? null);
   }, [conversationsQuery.isLoading, conversations, selectedId, setSelectedId]);
 
-  const createMutation = useMutation({
-    mutationFn: () => createConversation("demo"),
-  });
-
+  const createMutation = useMutation({ mutationFn: () => createConversation("demo") });
   const deleteMutation = useMutation({
     mutationFn: deleteConversation,
     onSuccess: async (_, deletedId) => {
@@ -61,23 +61,33 @@ export function App() {
         conversations={conversations}
         selectedId={selectedId}
         loading={conversationsQuery.isLoading}
+        activeView={activeView}
+        onViewChange={setActiveView}
         onSelect={(id) => {
+          setActiveView("chat");
           setSelectedId(id);
           resetTrace();
         }}
-        onNew={() => void createAndSelect()}
+        onNew={() => {
+          setActiveView("chat");
+          void createAndSelect();
+        }}
         onDelete={(id) => {
-          if (window.confirm("删除这个对话？历史记录将从列表中隐藏。")) {
-            deleteMutation.mutate(id);
-          }
+          if (window.confirm("删除这个对话？历史记录将从列表中隐藏。")) deleteMutation.mutate(id);
         }}
       />
-      <ChatPane
-        conversationId={selectedId}
-        title={selectedConversation?.title ?? null}
-        createConversation={createAndSelect}
-      />
-      <TracePanel />
+
+      {activeView === "chat" ? (
+        <>
+          <ChatPane conversationId={selectedId} title={selectedConversation?.title ?? null} createConversation={createAndSelect} />
+          <TracePanel />
+        </>
+      ) : (
+        <>
+          <DocumentCenter />
+          <DocumentGuidePanel />
+        </>
+      )}
     </div>
   );
 }
