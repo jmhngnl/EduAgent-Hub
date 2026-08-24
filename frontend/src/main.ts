@@ -7,6 +7,19 @@ type Citation = {
   score: number;
 };
 
+type TaskRoute = "lab_resource" | "paper_reading" | "general";
+
+type AgentTrace = {
+  task_route: TaskRoute;
+  task_route_label: string;
+  skill: string | null;
+  tool_calls: string[];
+};
+
+const DEFAULT_CHAT_HEIGHT = 560;
+const MIN_CHAT_HEIGHT = 320;
+const CHAT_HEIGHT_STORAGE_KEY = "eduagentChatHeight";
+
 type PlatformStatus = {
   service: string;
   environment: string;
@@ -151,11 +164,20 @@ app.innerHTML = `
           <button class="ghost" id="settingsButton">连接设置</button>
         </div>
 
-        <div class="messages" id="messages">
-          <div class="message assistant">
-            <strong>EduAgent</strong>
-            <p>请先建立知识索引，然后询问制度、流程或计算问题。</p>
+        <div class="chat-window" id="chatWindow">
+          <div class="messages" id="messages">
+            <div class="message assistant">
+              <strong>EduAgent</strong>
+              <p>请先建立知识索引，然后询问实验室资源或论文解读问题。</p>
+            </div>
           </div>
+          <div
+            class="chat-resizer"
+            id="chatResizer"
+            role="separator"
+            aria-label="拖拽调整对话区高度"
+            aria-orientation="horizontal"
+          ><span></span></div>
         </div>
 
         <div class="composer">
@@ -281,11 +303,108 @@ function addMessage(role: "user" | "assistant", content: string): HTMLElement {
   element.className = `message ${role}`;
   element.innerHTML = `
     <strong>${role === "user" ? "你" : "EduAgent"}</strong>
+    ${
+      role === "assistant"
+        ? '<div class="message-trace" hidden></div>'
+        : ""
+    }
     <p>${escapeHtml(content)}</p>
   `;
   container.appendChild(element);
   container.scrollTop = container.scrollHeight;
   return element;
+}
+
+function normalizeTaskRoute(value: unknown): TaskRoute {
+  if (value === "paper_reading" || value === "lab_resource") {
+    return value;
+  }
+  return "general";
+}
+
+function toolLabel(name: string): string {
+  const labels: Record<string, string> = {
+    search_knowledge: "实验室知识检索",
+    search_academic_papers: "学术论文检索",
+    read_paper_evidence: "论文证据读取",
+    safe_calculator: "安全计算器",
+  };
+  return labels[name] ?? name;
+}
+
+function renderAgentTrace(element: HTMLElement, trace: AgentTrace): void {
+  const target = element.querySelector<HTMLDivElement>(".message-trace");
+  if (!target) return;
+
+  const tools =
+    trace.tool_calls.length > 0
+      ? trace.tool_calls
+          .map(
+            (name) =>
+              `<span class="trace-tool" title="${escapeHtml(name)}">${escapeHtml(toolLabel(name))}</span>`,
+          )
+          .join("")
+      : '<span class="trace-muted">等待工具调用</span>';
+
+  target.hidden = false;
+  target.innerHTML = `
+    <span class="trace-route ${trace.task_route}">
+      任务：${escapeHtml(trace.task_route_label)}
+    </span>
+    <span class="trace-skill">
+      Skill：<code>${escapeHtml(trace.skill ?? "none")}</code>
+    </span>
+    <span class="trace-tools">Tools：${tools}</span>
+  `;
+}
+
+function clampChatHeight(value: number): number {
+  const maxHeight = Math.max(
+    MIN_CHAT_HEIGHT,
+    Math.min(900, Math.floor(window.innerHeight * 0.78)),
+  );
+  return Math.min(maxHeight, Math.max(MIN_CHAT_HEIGHT, value));
+}
+
+function initChatResizer(): void {
+  const chatWindow = document.querySelector<HTMLDivElement>("#chatWindow");
+  const handle = document.querySelector<HTMLDivElement>("#chatResizer");
+  if (!chatWindow || !handle) return;
+
+  const saved = Number(localStorage.getItem(CHAT_HEIGHT_STORAGE_KEY));
+  if (Number.isFinite(saved) && saved > 0) {
+    chatWindow.style.height = `${clampChatHeight(saved)}px`;
+  }
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = chatWindow.getBoundingClientRect().height;
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add("dragging");
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextHeight = clampChatHeight(
+        startHeight + moveEvent.clientY - startY,
+      );
+      chatWindow.style.height = `${nextHeight}px`;
+      localStorage.setItem(CHAT_HEIGHT_STORAGE_KEY, String(nextHeight));
+    };
+
+    const onEnd = () => {
+      handle.classList.remove("dragging");
+      handle.removeEventListener("pointermove", onMove);
+    };
+
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onEnd, { once: true });
+    handle.addEventListener("pointercancel", onEnd, { once: true });
+  });
+
+  handle.addEventListener("dblclick", () => {
+    chatWindow.style.height = `${DEFAULT_CHAT_HEIGHT}px`;
+    localStorage.removeItem(CHAT_HEIGHT_STORAGE_KEY);
+  });
 }
 
 function renderCitations(items: Citation[]): void {
@@ -539,6 +658,13 @@ async function sendMessage(): Promise<void> {
 
   renderCitations([]);
 
+  let trace: AgentTrace = {
+    task_route: "general",
+    task_route_label: "正在判断任务类型",
+    skill: null,
+    tool_calls: [],
+  };
+
   try {
     const response = await fetch(`${currentBase()}/v1/chat/stream`, {
       method: "POST",
@@ -582,10 +708,44 @@ async function sendMessage(): Promise<void> {
           answer += String(data);
           paragraph.textContent = answer;
         }
+        if (event === "route") {
+          trace = {
+            task_route: normalizeTaskRoute(data.task_route),
+            task_route_label: String(
+              data.task_route_label ?? "通用任务",
+            ),
+            skill:
+              typeof data.skill === "string" && data.skill
+                ? data.skill
+                : null,
+            tool_calls: [],
+          };
+          renderAgentTrace(assistantElement, trace);
+        }
         if (event === "tool_start") {
-          paragraph.dataset.tool = String(data.name ?? "tool");
+          const name = String(data.name ?? "unknown");
+          if (!trace.tool_calls.includes(name)) {
+            trace.tool_calls.push(name);
+          }
+          renderAgentTrace(assistantElement, trace);
         }
         if (event === "done") {
+          trace = {
+            task_route: normalizeTaskRoute(
+              data.task_route ?? trace.task_route,
+            ),
+            task_route_label: String(
+              data.task_route_label ?? trace.task_route_label,
+            ),
+            skill:
+              typeof data.skill === "string" && data.skill
+                ? data.skill
+                : trace.skill,
+            tool_calls: Array.isArray(data.tool_calls)
+              ? data.tool_calls.map(String)
+              : trace.tool_calls,
+          };
+          renderAgentTrace(assistantElement, trace);
           renderCitations((data.citations ?? []) as Citation[]);
         }
         if (event === "error") {
@@ -664,5 +824,6 @@ document
     window.location.reload();
   });
 
+initChatResizer();
 void checkHealth();
 void loadDocuments("lab_document");

@@ -20,7 +20,7 @@ from app.llm import ModelFactory
 from app.prompts import build_agent_system_prompt
 from app.rag import KnowledgeStore, RetrievedChunk
 from app.schemas import ChatResponse, Citation
-from app.skills.registry import SkillRegistry, is_paper_request
+from app.skills.registry import SkillRegistry
 from app.tools.paper_search import PaperSearchClient
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,13 @@ class InMemoryConversationStore:
 
 
 ConversationStore = RedisConversationStore | InMemoryConversationStore
+
+
+_TASK_ROUTE_LABELS = {
+    "lab_resource": "实验室资源任务",
+    "paper_reading": "论文解读任务",
+    "general": "通用任务",
+}
 
 
 def _citations(chunks: list[RetrievedChunk]) -> list[Citation]:
@@ -353,11 +360,22 @@ class AgentService:
             safe_calculator,
         ]
         bound_model = model.bind_tools(tools)
+        skill_match = self.skills.match(message)
+        route_label = _TASK_ROUTE_LABELS[skill_match.route]
+        routing_note = (
+            "【任务路由】后端已在调用模型前完成任务分类："
+            f"{route_label}（route={skill_match.route}）。"
+            f"当前 Skill：{skill_match.skill_name or 'none'}。"
+            "请优先遵守当前路由与 Skill，不要跨知识域调用无关工具。"
+        )
+        skill_instructions = "\n\n".join(
+            part for part in (routing_note, skill_match.instructions) if part
+        )
         system_message = SystemMessage(
             content=build_agent_system_prompt(
                 context=context,
                 workspace_id=workspace_id,
-                skill_instructions=self.skills.instructions_for(message),
+                skill_instructions=skill_instructions,
             )
         )
 
@@ -393,7 +411,8 @@ class AgentService:
         workspace_id: str,
         message: str,
     ) -> list[RetrievedChunk]:
-        document_type = "paper" if is_paper_request(message) else "lab_document"
+        route = self.skills.match(message).route
+        document_type = "paper" if route == "paper_reading" else "lab_document"
         return await self.knowledge.search(
             workspace_id=workspace_id,
             query=message,
@@ -411,6 +430,9 @@ class AgentService:
         if len(message) > self.settings.max_user_input_chars:
             raise ValueError("User input exceeds the configured maximum length")
 
+        skill_match = self.skills.match(message)
+        route_label = _TASK_ROUTE_LABELS[skill_match.route]
+
         guarded = detect_prompt_injection(message)
         if guarded:
             answer = (
@@ -422,6 +444,9 @@ class AgentService:
             return ChatResponse(
                 answer=answer,
                 session_id=session_id,
+                task_route=skill_match.route,
+                task_route_label=route_label,
+                skill=skill_match.skill_name,
                 guarded=True,
             )
 
@@ -451,7 +476,11 @@ class AgentService:
                     "接入真实 OpenAI-compatible 模型后，LangGraph 会进一步完成"
                     "工具选择、综合推理和自然语言生成。"
                 )
-                tool_calls = ["search_knowledge"]
+                tool_calls = [
+                    "read_paper_evidence"
+                    if skill_match.route == "paper_reading"
+                    else "search_knowledge"
+                ]
             else:
                 answer = (
                     "当前运行在 MOCK_LLM 模式，且知识库没有检索到相关内容。"
@@ -500,6 +529,9 @@ class AgentService:
             session_id=session_id,
             citations=citations,
             tool_calls=tool_calls,
+            task_route=skill_match.route,
+            task_route_label=route_label,
+            skill=skill_match.skill_name,
         )
 
     async def stream(
@@ -510,6 +542,20 @@ class AgentService:
         workspace_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream model events. Mock mode streams the deterministic response."""
+
+        skill_match = self.skills.match(message)
+        route_label = _TASK_ROUTE_LABELS[skill_match.route]
+
+        # This is intentionally the first SSE event. The UI can show the
+        # deterministic route and activated Skill before model tokens arrive.
+        yield {
+            "type": "route",
+            "data": {
+                "task_route": skill_match.route,
+                "task_route_label": route_label,
+                "skill": skill_match.skill_name,
+            },
+        }
 
         if self.settings.mock_llm or detect_prompt_injection(message):
             result = await self.chat(
@@ -529,6 +575,9 @@ class AgentService:
                     ],
                     "tool_calls": result.tool_calls,
                     "guarded": result.guarded,
+                    "task_route": result.task_route,
+                    "task_route_label": result.task_route_label,
+                    "skill": result.skill,
                 },
             }
             return
@@ -602,5 +651,8 @@ class AgentService:
                 "citations": [item.model_dump() for item in _citations(chunks)],
                 "tool_calls": tool_calls,
                 "guarded": False,
+                "task_route": skill_match.route,
+                "task_route_label": route_label,
+                "skill": skill_match.skill_name,
             },
         }

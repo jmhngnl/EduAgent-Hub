@@ -314,15 +314,71 @@ textarea {
 .chat-panel {
   display: flex;
   flex-direction: column;
+  align-self: start;
+  min-height: 0;
+}
+
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  height: 560px;
+  min-height: 320px;
+  max-height: 78vh;
+  border: 1px solid #e0e6ee;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f7f9fc;
 }
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  border: 1px solid #e0e6ee;
-  border-radius: 14px;
   padding: 1rem;
   background: #f7f9fc;
+  scrollbar-width: thin;
+  scrollbar-color: #9aa9bc transparent;
+}
+
+.messages::-webkit-scrollbar {
+  width: 9px;
+}
+
+.messages::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #9aa9bc;
+  background-clip: padding-box;
+}
+
+.chat-resizer {
+  position: relative;
+  flex: 0 0 12px;
+  border-top: 1px solid #dce4ee;
+  cursor: ns-resize;
+  touch-action: none;
+  background: #f0f4f8;
+}
+
+.chat-resizer span {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 72px;
+  height: 3px;
+  border-radius: 999px;
+  background: #9aa9bc;
+  transform: translateX(-50%);
+}
+
+.chat-resizer:hover,
+.chat-resizer.dragging {
+  background: #e3eaf2;
+}
+
+.chat-resizer:hover span,
+.chat-resizer.dragging span {
+  background: #526b88;
 }
 
 .message {
@@ -350,6 +406,63 @@ textarea {
   background: #172b4d;
 }
 
+.message-trace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0.45rem 0 0.7rem;
+  font-size: 0.72rem;
+}
+
+.message-trace[hidden] {
+  display: none;
+}
+
+.trace-route,
+.trace-skill,
+.trace-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  border-radius: 8px;
+  padding: 0.3rem 0.48rem;
+  background: #edf2f7;
+}
+
+.trace-route.paper_reading {
+  color: #56328a;
+  background: #f0e9fb;
+}
+
+.trace-route.lab_resource {
+  color: #245b3a;
+  background: #e5f5eb;
+}
+
+.trace-route.general {
+  color: #46566b;
+}
+
+.trace-skill code {
+  border-radius: 4px;
+  padding: 0.05rem 0.25rem;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.trace-tool {
+  border-radius: 999px;
+  padding: 0.12rem 0.38rem;
+  color: #294764;
+  background: #dce8f4;
+}
+
+.trace-muted {
+  color: #7a8797;
+}
+
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -359,6 +472,9 @@ textarea {
 
 .citations {
   margin-top: 0.85rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
 }
 
 .citations h3 {
@@ -418,8 +534,13 @@ dialog::backdrop {
     min-height: auto;
   }
 
-  .messages {
-    min-height: 480px;
+  .chat-panel {
+    width: 100%;
+  }
+
+  .chat-window {
+    height: 520px;
+    max-height: 72vh;
   }
 
   .composer,

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 DocumentType = Literal["lab_document", "paper"]
+TaskRoute = Literal["lab_resource", "paper_reading", "general"]
 
 
 class HealthResponse(BaseModel):
@@ -93,6 +94,9 @@ class ChatResponse(BaseModel):
     session_id: str
     citations: list[Citation] = Field(default_factory=list)
     tool_calls: list[str] = Field(default_factory=list)
+    task_route: TaskRoute = "general"
+    task_route_label: str = "通用任务"
+    skill: str | None = None
     guarded: bool = False
 
 
