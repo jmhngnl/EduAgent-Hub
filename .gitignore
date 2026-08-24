@@ -34,3 +34,6 @@ uploads/
 # One-off papers used for local ingestion/debugging at repository root.
 # PDFs intentionally stored under a subdirectory can still be versioned.
 /*.pdf
+.env.backup
+/redeploy-v2.1-*.sh
+/smoke-v2.1-*.sh

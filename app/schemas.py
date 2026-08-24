@@ -81,6 +81,10 @@ class Citation(BaseModel):
     source: str
     chunk_id: str
     score: float
+    citation_type: Literal["knowledge", "paper"] = "knowledge"
+    url: str | None = None
+    title: str | None = None
+    year: int | None = None
 
 
 class ChatRequest(BaseModel):
