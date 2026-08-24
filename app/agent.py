@@ -180,9 +180,45 @@ def _citations(chunks: list[RetrievedChunk]) -> list[Citation]:
             source=chunk.source,
             chunk_id=chunk.id,
             score=chunk.score,
+            citation_type="knowledge",
         )
         for chunk in chunks
     ]
+
+
+def _paper_citations(papers: list[dict[str, Any]]) -> list[Citation]:
+    citations: list[Citation] = []
+    for index, paper in enumerate(papers, start=1):
+        paper_id = str(
+            paper.get("paper_id")
+            or paper.get("doi")
+            or paper.get("arxiv_id")
+            or f"paper-{index}"
+        )
+        title = str(paper.get("title") or "Semantic Scholar paper")
+        year = paper.get("year")
+        citations.append(
+            Citation(
+                document_id=paper_id,
+                source=title,
+                chunk_id=f"semantic-scholar:{paper_id}",
+                score=0.0,
+                citation_type="paper",
+                url=paper.get("url") or paper.get("open_access_pdf_url"),
+                title=title,
+                year=year if isinstance(year, int) else None,
+            )
+        )
+    return citations
+
+
+def _extend_unique_citations(target: list[Citation], items: list[Citation]) -> None:
+    seen = {(item.document_id, item.chunk_id, item.source) for item in target}
+    for item in items:
+        key = (item.document_id, item.chunk_id, item.source)
+        if key not in seen:
+            target.append(item)
+            seen.add(key)
 
 
 def _context_block(chunks: list[RetrievedChunk]) -> str:
@@ -221,6 +257,7 @@ class AgentService:
         workspace_id: str,
         context: str,
         message: str,
+        citation_sink: list[Citation] | None = None,
     ):
         model = self.model_factory.chat_model()
 
@@ -237,6 +274,8 @@ class AgentService:
                 document_id=document_id,
                 document_type="lab_document",
             )
+            if citation_sink is not None:
+                _extend_unique_citations(citation_sink, _citations(chunks))
             payload = [
                 {
                     "source": item.source,
@@ -276,6 +315,8 @@ class AgentService:
                     },
                     ensure_ascii=False,
                 )
+            if citation_sink is not None:
+                _extend_unique_citations(citation_sink, _paper_citations(papers))
             return json.dumps(
                 {"status": "ok", "count": len(papers), "papers": papers},
                 ensure_ascii=False,
@@ -326,6 +367,8 @@ class AgentService:
                     ensure_ascii=False,
                 )
 
+            if citation_sink is not None:
+                _extend_unique_citations(citation_sink, _citations(selected))
             payload = [
                 {
                     "evidence_id": f"论文证据{index}",
@@ -454,7 +497,7 @@ class AgentService:
             workspace_id=workspace_id,
             message=message,
         )
-        citations = _citations(chunks)
+        citations = _citations(chunks) if self.settings.mock_llm else []
         context = _context_block(chunks)
 
         if self.settings.mock_llm:
@@ -488,11 +531,14 @@ class AgentService:
                 )
                 tool_calls = ["search_knowledge"]
         else:
+            runtime_citations: list[Citation] = []
             graph = self._build_graph(
                 workspace_id=workspace_id,
                 context=context,
                 message=message,
+                citation_sink=runtime_citations,
             )
+            citations = runtime_citations
             messages = [
                 *await self._history_messages(session_id),
                 HumanMessage(content=message),
@@ -587,10 +633,12 @@ class AgentService:
             message=message,
         )
         context = _context_block(chunks)
+        runtime_citations: list[Citation] = []
         graph = self._build_graph(
             workspace_id=workspace_id,
             context=context,
             message=message,
+            citation_sink=runtime_citations,
         )
         messages = [
             *await self._history_messages(session_id),
@@ -648,7 +696,7 @@ class AgentService:
             "type": "done",
             "data": {
                 "session_id": session_id,
-                "citations": [item.model_dump() for item in _citations(chunks)],
+                "citations": [item.model_dump() for item in runtime_citations],
                 "tool_calls": tool_calls,
                 "guarded": False,
                 "task_route": skill_match.route,
