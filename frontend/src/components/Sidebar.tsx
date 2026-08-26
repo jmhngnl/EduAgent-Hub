@@ -1,6 +1,8 @@
+import { logout } from "../auth/api";
+import { useAuthStore } from "../auth/useAuthStore";
 import type { Conversation } from "../types";
 
-export type WorkspaceView = "chat" | "documents";
+export type WorkspaceView = "chat" | "documents" | "workspace";
 
 type Props = {
   conversations: Conversation[];
@@ -35,6 +37,10 @@ export function Sidebar({
   onNew,
   onDelete,
 }: Props) {
+  const user = useAuthStore((state) => state.user);
+  const workspaces = useAuthStore((state) => state.workspaces);
+  const activeWorkspaceId = useAuthStore((state) => state.activeWorkspaceId);
+  const setActiveWorkspaceId = useAuthStore((state) => state.setActiveWorkspaceId);
   const sections = new Map<string, Conversation[]>();
   for (const item of conversations) {
     const label = sectionLabel(item.updatedAt);
@@ -47,7 +53,7 @@ export function Sidebar({
         <div className="brand-mark">E</div>
         <div>
           <strong>EduAgent Hub</strong>
-          <span>AI Research Workspace</span>
+          <span>Enterprise Agent Workspace</span>
         </div>
       </div>
 
@@ -57,6 +63,9 @@ export function Sidebar({
         </button>
         <button className={activeView === "documents" ? "active" : ""} onClick={() => onViewChange("documents")}>
           <span>▤</span><div><strong>Documents</strong><small>Knowledge & papers</small></div>
+        </button>
+        <button className={activeView === "workspace" ? "active" : ""} onClick={() => onViewChange("workspace")}>
+          <span>◇</span><div><strong>Workspace</strong><small>Members & RBAC</small></div>
         </button>
       </nav>
 
@@ -84,17 +93,30 @@ export function Sidebar({
             ))}
           </div>
         </>
-      ) : (
+      ) : activeView === "documents" ? (
         <div className="module-copy">
           <span className="eyebrow">DOCUMENT CENTER</span>
           <strong>统一管理实验室知识与论文</strong>
-          <p>上传和索引属于显式平台操作；Agent 写知识库将在具备身份、权限与审计后再开放。</p>
+          <p>V2.2 起写入权限由 Workspace RBAC 控制：VIEWER 只读，MEMBER 及以上可写。</p>
+        </div>
+      ) : (
+        <div className="module-copy">
+          <span className="eyebrow">IDENTITY & ACCESS</span>
+          <strong>Workspace Membership</strong>
+          <p>OWNER / ADMIN 管理成员；所有业务请求由 JWT 身份与 Workspace Membership 双重约束。</p>
         </div>
       )}
 
       <div className="workspace-chip">
-        <span className="status-dot" />
-        Workspace: demo <code>V2.1</code>
+        <div className="account-row-v22">
+          <span><strong>{user?.displayName ?? "User"}</strong><small>@{user?.username ?? "unknown"}</small></span>
+          <button type="button" onClick={() => void logout()}>退出</button>
+        </div>
+        <select className="account-workspace-select" value={activeWorkspaceId ?? ""} onChange={(e) => setActiveWorkspaceId(e.target.value || null)}>
+          <option value="">选择 Workspace</option>
+          {workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name} · {workspace.role}</option>)}
+        </select>
+        <div><span className="status-dot" /> Platform <code>V2.2</code></div>
       </div>
     </aside>
   );

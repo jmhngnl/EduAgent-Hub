@@ -52,9 +52,27 @@ public class ConversationService {
                 .last("LIMIT " + limit));
     }
 
+    public List<Conversation> listOwned(String userId, String workspaceId, int limit) {
+        String resolvedWorkspace = defaultIfBlank(workspaceId, DEFAULT_WORKSPACE);
+        return conversationMapper.selectList(new LambdaQueryWrapper<Conversation>()
+                .eq(Conversation::getUserId, userId)
+                .eq(Conversation::getWorkspaceId, resolvedWorkspace)
+                .ne(Conversation::getStatus, DELETED)
+                .orderByDesc(Conversation::getUpdatedAt)
+                .last("LIMIT " + limit));
+    }
+
     public Conversation get(String id) {
         Conversation value = conversationMapper.selectById(id);
         if (value == null || DELETED.equals(value.getStatus())) {
+            throw new NotFoundException("Conversation not found: " + id);
+        }
+        return value;
+    }
+
+    public Conversation getOwned(String id, String userId) {
+        Conversation value = get(id);
+        if (!userId.equals(value.getUserId())) {
             throw new NotFoundException("Conversation not found: " + id);
         }
         return value;

@@ -1,3 +1,4 @@
+import { authFetch } from "../auth/authFetch";
 import type {
   ChatMessage,
   Conversation,
@@ -26,7 +27,7 @@ async function errorText(response: Response): Promise<string> {
 }
 
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await authFetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -119,7 +120,7 @@ export async function streamMessage(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(
+  const response = await authFetch(
     `${API_BASE}/conversations/${encodeURIComponent(conversationId)}/messages/stream`,
     {
       method: "POST",
@@ -180,7 +181,7 @@ export async function uploadDocument(input: {
   form.set("documentType", input.documentType);
   if (input.documentId?.trim()) form.set("documentId", input.documentId.trim());
 
-  const response = await fetch(`${API_BASE}/documents/upload`, {
+  const response = await authFetch(`${API_BASE}/documents/upload`, {
     method: "POST",
     body: form,
   });

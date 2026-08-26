@@ -37,3 +37,6 @@ uploads/
 .env.backup
 /redeploy-v2.1-*.sh
 /smoke-v2.1-*.sh
+
+/*.tar.gz
+/*.tgz

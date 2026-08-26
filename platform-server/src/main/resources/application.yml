@@ -14,6 +14,12 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 5000
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      database: ${SPRING_DATA_REDIS_DATABASE:3}
+      timeout: 3s
   servlet:
     multipart:
       max-file-size: ${PLATFORM_MAX_UPLOAD_MB:30}MB
@@ -42,6 +48,15 @@ management:
 eduagent:
   agent-base-url: ${AGENT_BASE_URL:http://localhost:8000}
   agent-api-key: ${AGENT_API_KEY:}
-  agent-api-keys-fallback: ${AGENT_API_KEYS_FALLBACK:demo}
+  agent-api-keys-fallback: ${AGENT_API_KEYS_FALLBACK:}
   agent-connect-timeout-seconds: ${AGENT_CONNECT_TIMEOUT_SECONDS:10}
   agent-request-timeout-seconds: ${AGENT_REQUEST_TIMEOUT_SECONDS:180}
+  security:
+    jwt-secret: ${PLATFORM_JWT_SECRET:dev-only-change-this-secret-before-production-0123456789}
+    jwt-issuer: ${PLATFORM_JWT_ISSUER:eduagent-hub}
+    access-token-minutes: ${PLATFORM_ACCESS_TOKEN_MINUTES:30}
+    refresh-token-days: ${PLATFORM_REFRESH_TOKEN_DAYS:7}
+    refresh-cookie-secure: ${PLATFORM_REFRESH_COOKIE_SECURE:false}
+    bootstrap-username: ${PLATFORM_BOOTSTRAP_USERNAME:}
+    bootstrap-password: ${PLATFORM_BOOTSTRAP_PASSWORD:}
+    bootstrap-display-name: ${PLATFORM_BOOTSTRAP_DISPLAY_NAME:Platform Owner}
