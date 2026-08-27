@@ -53,8 +53,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      API_KEYS: ${PLATFORM_INTERNAL_API_KEY:-change-this-internal-runtime-key}
+      API_KEY_WORKSPACES: ""
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - uploads:/tmp/eduagent_uploads
     depends_on:
@@ -91,15 +93,28 @@ services:
       SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${PLATFORM_MYSQL_DATABASE:-eduagent_platform}?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false"
       SPRING_DATASOURCE_USERNAME: ${PLATFORM_MYSQL_USER:-eduagent}
       SPRING_DATASOURCE_PASSWORD: ${PLATFORM_MYSQL_PASSWORD:-eduagent}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_DATABASE: 3
       AGENT_BASE_URL: http://api:8000
-      AGENT_API_KEY: ${PLATFORM_AGENT_API_KEY:-}
-      AGENT_API_KEYS_FALLBACK: ${API_KEYS:-demo}
+      AGENT_API_KEY: ${PLATFORM_INTERNAL_API_KEY:-change-this-internal-runtime-key}
+      AGENT_API_KEYS_FALLBACK: ""
       AGENT_CONNECT_TIMEOUT_SECONDS: ${PLATFORM_AGENT_CONNECT_TIMEOUT_SECONDS:-10}
       AGENT_REQUEST_TIMEOUT_SECONDS: ${PLATFORM_AGENT_REQUEST_TIMEOUT_SECONDS:-180}
+      PLATFORM_JWT_SECRET: ${PLATFORM_JWT_SECRET:-dev-only-change-this-secret-before-production-0123456789}
+      PLATFORM_JWT_ISSUER: ${PLATFORM_JWT_ISSUER:-eduagent-hub}
+      PLATFORM_ACCESS_TOKEN_MINUTES: ${PLATFORM_ACCESS_TOKEN_MINUTES:-30}
+      PLATFORM_REFRESH_TOKEN_DAYS: ${PLATFORM_REFRESH_TOKEN_DAYS:-7}
+      PLATFORM_REFRESH_COOKIE_SECURE: ${PLATFORM_REFRESH_COOKIE_SECURE:-false}
+      PLATFORM_BOOTSTRAP_USERNAME: ${PLATFORM_BOOTSTRAP_USERNAME:-}
+      PLATFORM_BOOTSTRAP_PASSWORD: ${PLATFORM_BOOTSTRAP_PASSWORD:-}
+      PLATFORM_BOOTSTRAP_DISPLAY_NAME: ${PLATFORM_BOOTSTRAP_DISPLAY_NAME:-Platform Owner}
     ports:
       - "${PLATFORM_SERVER_PORT:-8081}:8080"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       api:
         condition: service_started
