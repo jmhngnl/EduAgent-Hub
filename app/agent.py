@@ -13,13 +13,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
-from redis.asyncio import Redis
 
 from app.config import Settings
+from app.context_manager import ContextManager
 from app.llm import ModelFactory
 from app.prompts import build_agent_system_prompt
 from app.rag import KnowledgeStore, RetrievedChunk
-from app.schemas import ChatResponse, Citation
+from app.schemas import ChatResponse, Citation, ConversationContext
 from app.skills.registry import SkillRegistry
 from app.tools.paper_search import PaperSearchClient
 
@@ -108,64 +108,6 @@ def extract_arithmetic_expression(text: str) -> str | None:
     return max(candidates, key=len) if candidates else None
 
 
-class RedisConversationStore:
-    def __init__(self, redis: Redis, max_messages: int = 16) -> None:
-        self.redis = redis
-        self.max_messages = max_messages
-
-    @staticmethod
-    def _key(session_id: str) -> str:
-        return f"eduagent:conversation:{session_id}"
-
-    async def load(self, session_id: str) -> list[dict[str, str]]:
-        raw = await self.redis.get(self._key(session_id))
-        if not raw:
-            return []
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-        return [
-            item
-            for item in data
-            if isinstance(item, dict)
-            and item.get("role") in {"user", "assistant"}
-            and isinstance(item.get("content"), str)
-        ][-self.max_messages :]
-
-    async def append(self, session_id: str, role: str, content: str) -> None:
-        history = await self.load(session_id)
-        history.append({"role": role, "content": content})
-        history = history[-self.max_messages :]
-        await self.redis.set(
-            self._key(session_id),
-            json.dumps(history, ensure_ascii=False),
-            ex=60 * 60 * 24 * 7,
-        )
-
-    async def ping(self) -> bool:
-        return bool(await self.redis.ping())
-
-
-class InMemoryConversationStore:
-    def __init__(self, max_messages: int = 16) -> None:
-        self.max_messages = max_messages
-        self.data: dict[str, list[dict[str, str]]] = {}
-
-    async def load(self, session_id: str) -> list[dict[str, str]]:
-        return list(self.data.get(session_id, []))[-self.max_messages :]
-
-    async def append(self, session_id: str, role: str, content: str) -> None:
-        self.data.setdefault(session_id, []).append({"role": role, "content": content})
-        self.data[session_id] = self.data[session_id][-self.max_messages :]
-
-    async def ping(self) -> bool:
-        return True
-
-
-ConversationStore = RedisConversationStore | InMemoryConversationStore
-
-
 _TASK_ROUTE_LABELS = {
     "lab_resource": "实验室资源任务",
     "paper_reading": "论文解读任务",
@@ -242,20 +184,20 @@ class AgentService:
         *,
         settings: Settings,
         knowledge: KnowledgeStore,
-        conversations: ConversationStore,
     ) -> None:
         self.settings = settings
         self.knowledge = knowledge
-        self.conversations = conversations
         self.model_factory = ModelFactory(settings)
         self.paper_search = PaperSearchClient(settings)
         self.skills = SkillRegistry(settings.skills_dir)
+        self.context_manager = ContextManager(settings, self.model_factory)
 
     def _build_graph(
         self,
         *,
         workspace_id: str,
-        context: str,
+        rag_context: str,
+        conversation_summary: str,
         message: str,
         citation_sink: list[Citation] | None = None,
     ):
@@ -416,9 +358,10 @@ class AgentService:
         )
         system_message = SystemMessage(
             content=build_agent_system_prompt(
-                context=context,
+                context=rag_context,
                 workspace_id=workspace_id,
                 skill_instructions=skill_instructions,
+                conversation_summary=conversation_summary,
             )
         )
 
@@ -437,16 +380,6 @@ class AgentService:
         )
         graph_builder.add_edge("tools", "assistant")
         return graph_builder.compile()
-
-    async def _history_messages(self, session_id: str) -> list[HumanMessage | AIMessage]:
-        history = await self.conversations.load(session_id)
-        messages: list[HumanMessage | AIMessage] = []
-        for item in history:
-            if item["role"] == "user":
-                messages.append(HumanMessage(content=item["content"]))
-            else:
-                messages.append(AIMessage(content=item["content"]))
-        return messages
 
     async def _prefetch(
         self,
@@ -469,6 +402,7 @@ class AgentService:
         message: str,
         session_id: str,
         workspace_id: str,
+        conversation_context: ConversationContext | None = None,
     ) -> ChatResponse:
         if len(message) > self.settings.max_user_input_chars:
             raise ValueError("User input exceeds the configured maximum length")
@@ -482,8 +416,6 @@ class AgentService:
                 "检测到可能绕过系统边界或索取内部提示词的请求。"
                 "我不会执行该部分指令，但可以继续回答正常的业务问题。"
             )
-            await self.conversations.append(session_id, "user", message)
-            await self.conversations.append(session_id, "assistant", answer)
             return ChatResponse(
                 answer=answer,
                 session_id=session_id,
@@ -498,7 +430,11 @@ class AgentService:
             message=message,
         )
         citations = _citations(chunks) if self.settings.mock_llm else []
-        context = _context_block(chunks)
+        prepared = await self.context_manager.prepare(
+            conversation_context=conversation_context or ConversationContext(),
+            current_message=message,
+            chunks=chunks,
+        )
 
         if self.settings.mock_llm:
             expression = extract_arithmetic_expression(message)
@@ -534,13 +470,14 @@ class AgentService:
             runtime_citations: list[Citation] = []
             graph = self._build_graph(
                 workspace_id=workspace_id,
-                context=context,
+                rag_context=prepared.rag_context,
+                conversation_summary=prepared.summary,
                 message=message,
                 citation_sink=runtime_citations,
             )
             citations = runtime_citations
             messages = [
-                *await self._history_messages(session_id),
+                *prepared.recent_messages,
                 HumanMessage(content=message),
             ]
             result = await graph.ainvoke(
@@ -567,9 +504,6 @@ class AgentService:
                 for call in getattr(item, "tool_calls", [])
             ]
 
-        await self.conversations.append(session_id, "user", message)
-        await self.conversations.append(session_id, "assistant", answer)
-
         return ChatResponse(
             answer=answer,
             session_id=session_id,
@@ -578,6 +512,8 @@ class AgentService:
             task_route=skill_match.route,
             task_route_label=route_label,
             skill=skill_match.skill_name,
+            context_stats=prepared.context_stats,
+            context_update=prepared.context_update,
         )
 
     async def stream(
@@ -586,6 +522,7 @@ class AgentService:
         message: str,
         session_id: str,
         workspace_id: str,
+        conversation_context: ConversationContext | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream model events. Mock mode streams the deterministic response."""
 
@@ -608,6 +545,7 @@ class AgentService:
                 message=message,
                 session_id=session_id,
                 workspace_id=workspace_id,
+                conversation_context=conversation_context,
             )
             for start in range(0, len(result.answer), 40):
                 yield {"type": "token", "data": result.answer[start : start + 40]}
@@ -624,6 +562,12 @@ class AgentService:
                     "task_route": result.task_route,
                     "task_route_label": result.task_route_label,
                     "skill": result.skill,
+                    "context_stats": result.context_stats,
+                    "context_update": (
+                        result.context_update.model_dump()
+                        if result.context_update is not None
+                        else None
+                    ),
                 },
             }
             return
@@ -632,16 +576,21 @@ class AgentService:
             workspace_id=workspace_id,
             message=message,
         )
-        context = _context_block(chunks)
+        prepared = await self.context_manager.prepare(
+            conversation_context=conversation_context or ConversationContext(),
+            current_message=message,
+            chunks=chunks,
+        )
         runtime_citations: list[Citation] = []
         graph = self._build_graph(
             workspace_id=workspace_id,
-            context=context,
+            rag_context=prepared.rag_context,
+            conversation_summary=prepared.summary,
             message=message,
             citation_sink=runtime_citations,
         )
         messages = [
-            *await self._history_messages(session_id),
+            *prepared.recent_messages,
             HumanMessage(content=message),
         ]
 
@@ -689,8 +638,6 @@ class AgentService:
             return
 
         answer = "".join(answer_parts).strip() or "Agent 未生成有效回答，请稍后重试。"
-        await self.conversations.append(session_id, "user", message)
-        await self.conversations.append(session_id, "assistant", answer)
 
         yield {
             "type": "done",
@@ -702,5 +649,11 @@ class AgentService:
                 "task_route": skill_match.route,
                 "task_route_label": route_label,
                 "skill": skill_match.skill_name,
+                "context_stats": prepared.context_stats,
+                "context_update": (
+                    prepared.context_update.model_dump()
+                    if prepared.context_update is not None
+                    else None
+                ),
             },
         }

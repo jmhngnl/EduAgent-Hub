@@ -57,8 +57,16 @@ class Settings(BaseSettings):
     chunk_overlap: int = 120
     retrieval_top_k: int = 6
     retrieval_candidate_k: int = 20
-    max_history_messages: int = 16
     max_user_input_chars: int = 12_000
+
+    # V2.2.1 context management. Approximate tokens; not billing usage.
+    context_max_input_tokens: int = 16_000
+    context_reserved_output_tokens: int = 2_500
+    context_system_reserve_tokens: int = 2_200
+    context_recent_history_tokens: int = 4_500
+    context_summary_max_tokens: int = 1_800
+    context_summary_source_tokens: int = 7_000
+    context_rag_tokens: int = 5_000
 
     langsmith_tracing: bool = False
     langsmith_api_key: str = ""

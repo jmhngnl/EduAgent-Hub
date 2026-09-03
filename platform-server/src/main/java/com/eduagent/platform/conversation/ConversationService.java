@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -37,6 +38,7 @@ public class ConversationService {
         value.setWorkspaceId(defaultIfBlank(request.workspaceId(), DEFAULT_WORKSPACE));
         value.setTitle(defaultIfBlank(request.title(), DEFAULT_TITLE));
         value.setStatus(ACTIVE);
+        value.setSummarizedMessageCount(0);
         value.setCreatedAt(now);
         value.setUpdatedAt(now);
         conversationMapper.insert(value);
@@ -122,6 +124,77 @@ public class ConversationService {
                 .eq(Conversation::getId, id)
                 .set(Conversation::getStatus, DELETED)
                 .set(Conversation::getUpdatedAt, LocalDateTime.now()));
+    }
+
+    public AgentContextSnapshot agentContext(String conversationId, String currentUserMessageId) {
+        Conversation conversation = get(conversationId);
+        List<ChatMessage> persisted = messages(conversationId);
+        List<ContextMessage> history = new ArrayList<>();
+
+        for (ChatMessage message : persisted) {
+            if (message.getId().equals(currentUserMessageId)) {
+                continue;
+            }
+            if (!"USER".equals(message.getRole()) && !"ASSISTANT".equals(message.getRole())) {
+                continue;
+            }
+            history.add(new ContextMessage(
+                    message.getRole().toLowerCase(Locale.ROOT),
+                    message.getContent()
+            ));
+        }
+
+        int summarized = conversation.getSummarizedMessageCount() == null
+                ? 0
+                : Math.max(0, conversation.getSummarizedMessageCount());
+        summarized = Math.min(summarized, history.size());
+
+        return new AgentContextSnapshot(
+                conversation.getContextSummary() == null ? "" : conversation.getContextSummary(),
+                summarized,
+                new ArrayList<>(history.subList(summarized, history.size()))
+        );
+    }
+
+    @Transactional
+    public void updateContextSummary(
+            String conversationId,
+            String summary,
+            int summarizedMessageCount
+    ) {
+        if (summary == null || summary.isBlank() || summarizedMessageCount <= 0) {
+            return;
+        }
+
+        Conversation current = get(conversationId);
+        int existing = current.getSummarizedMessageCount() == null
+                ? 0
+                : current.getSummarizedMessageCount();
+        int maxPersisted = messages(conversationId).size();
+        int resolvedCount = Math.min(summarizedMessageCount, maxPersisted);
+        if (resolvedCount <= existing) {
+            return;
+        }
+
+        conversationMapper.update(
+                null,
+                new LambdaUpdateWrapper<Conversation>()
+                        .eq(Conversation::getId, conversationId)
+                        .lt(Conversation::getSummarizedMessageCount, resolvedCount)
+                        .set(Conversation::getContextSummary, summary.trim())
+                        .set(Conversation::getSummarizedMessageCount, resolvedCount)
+                        .set(Conversation::getContextUpdatedAt, LocalDateTime.now())
+        );
+    }
+
+    public record ContextMessage(String role, String content) {
+    }
+
+    public record AgentContextSnapshot(
+            String summary,
+            int summarizedMessageCount,
+            List<ContextMessage> messages
+    ) {
     }
 
     private String deriveTitle(String content) {

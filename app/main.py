@@ -35,11 +35,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_fastapi_instrumentator import Instrumentator
 from redis.asyncio import Redis
 
-from app.agent import (
-    AgentService,
-    InMemoryConversationStore,
-    RedisConversationStore,
-)
+from app.agent import AgentService
 from app.config import Settings, get_settings
 from app.llm import ModelFactory
 from app.rag import InMemoryKnowledgeStore, PostgresKnowledgeStore
@@ -155,26 +151,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:
         await redis.ping()
-        conversations = RedisConversationStore(
-            redis,
-            max_messages=settings.max_history_messages,
-        )
         app.state.redis_status = "connected"
     except Exception:
-        logger.exception("Redis unavailable; using in-memory conversation store")
+        logger.exception("Redis unavailable; continuing without Python runtime cache")
         await redis.aclose()
         redis = None
-        conversations = InMemoryConversationStore(settings.max_history_messages)
-        app.state.redis_status = "fallback-memory"
+        app.state.redis_status = "unavailable"
 
     app.state.settings = settings
     app.state.knowledge = knowledge
     app.state.redis = redis
-    app.state.conversations = conversations
     app.state.agent = AgentService(
         settings=settings,
         knowledge=knowledge,
-        conversations=conversations,
     )
 
     yield
@@ -186,7 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="EduAgent Hub API",
-    version="1.1.0",
+    version="2.2.1",
     description="Production-oriented LangGraph Agent and hybrid RAG platform.",
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
@@ -446,6 +435,7 @@ async def chat(
             message=payload.message,
             session_id=payload.session_id,
             workspace_id=payload.workspace_id,
+            conversation_context=payload.conversation_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -479,6 +469,7 @@ async def chat_stream(
             message=payload.message,
             session_id=payload.session_id,
             workspace_id=payload.workspace_id,
+            conversation_context=payload.conversation_context,
         ):
             yield f"event: {event['type']}\n"
             yield "data: " + json.dumps(event["data"], ensure_ascii=False) + "\n\n"
