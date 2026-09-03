@@ -87,10 +87,27 @@ class Citation(BaseModel):
     year: int | None = None
 
 
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=100_000)
+
+
+class ConversationContext(BaseModel):
+    summary: str = ""
+    summarized_message_count: int = Field(default=0, ge=0)
+    messages: list[ConversationMessage] = Field(default_factory=list)
+
+
+class ConversationContextUpdate(BaseModel):
+    summary: str
+    summarized_message_count: int = Field(ge=0)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str = Field(min_length=1, max_length=200)
     workspace_id: str = Field(default="demo", min_length=1, max_length=100)
+    conversation_context: ConversationContext = Field(default_factory=ConversationContext)
 
 
 class ChatResponse(BaseModel):
@@ -102,6 +119,8 @@ class ChatResponse(BaseModel):
     task_route_label: str = "通用任务"
     skill: str | None = None
     guarded: bool = False
+    context_stats: dict[str, Any] = Field(default_factory=dict)
+    context_update: ConversationContextUpdate | None = None
 
 
 class IntentRequest(BaseModel):

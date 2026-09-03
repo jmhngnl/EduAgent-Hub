@@ -14,6 +14,9 @@ public class Conversation {
     private String workspaceId;
     private String title;
     private String status;
+    private String contextSummary;
+    private Integer summarizedMessageCount;
+    private LocalDateTime contextUpdatedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -27,6 +30,12 @@ public class Conversation {
     public void setTitle(String title) { this.title = title; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getContextSummary() { return contextSummary; }
+    public void setContextSummary(String contextSummary) { this.contextSummary = contextSummary; }
+    public Integer getSummarizedMessageCount() { return summarizedMessageCount; }
+    public void setSummarizedMessageCount(Integer summarizedMessageCount) { this.summarizedMessageCount = summarizedMessageCount; }
+    public LocalDateTime getContextUpdatedAt() { return contextUpdatedAt; }
+    public void setContextUpdatedAt(LocalDateTime contextUpdatedAt) { this.contextUpdatedAt = contextUpdatedAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

@@ -67,7 +67,7 @@ public class AgentStreamingService {
 
         // Persist the user's intent before invoking the non-deterministic agent runtime.
         // There is deliberately no long-running transaction across the SSE request.
-        conversationService.addMessage(
+        ChatMessage userMessage = conversationService.addMessage(
                 conversationId,
                 new CreateMessageRequest("USER", content, null, null, null, null, null, null)
         );
@@ -82,7 +82,8 @@ public class AgentStreamingService {
                 emitter,
                 clientOpen,
                 conversation,
-                content
+                content,
+                userMessage.getId()
         ));
         return emitter;
     }
@@ -91,7 +92,8 @@ public class AgentStreamingService {
             SseEmitter emitter,
             AtomicBoolean clientOpen,
             Conversation conversation,
-            String content
+            String content,
+            String currentUserMessageId
     ) {
         StreamAccumulator accumulator = new StreamAccumulator(System.nanoTime());
         try {
@@ -99,6 +101,19 @@ public class AgentStreamingService {
             payload.put("message", content);
             payload.put("session_id", conversation.getId());
             payload.put("workspace_id", conversation.getWorkspaceId());
+
+            ConversationService.AgentContextSnapshot contextSnapshot =
+                    conversationService.agentContext(conversation.getId(), currentUserMessageId);
+            ObjectNode contextNode = payload.putObject("conversation_context");
+            contextNode.put("summary", contextSnapshot.summary());
+            contextNode.put("summarized_message_count", contextSnapshot.summarizedMessageCount());
+            var messagesNode = contextNode.putArray("messages");
+            for (ConversationService.ContextMessage item : contextSnapshot.messages()) {
+                ObjectNode messageNode = jsonMapper.createObjectNode();
+                messageNode.put("role", item.role());
+                messageNode.put("content", item.content());
+                messagesNode.add(messageNode);
+            }
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(agentBaseUrl + "/v1/chat/stream"))
@@ -188,7 +203,11 @@ public class AgentStreamingService {
                 ? "[]"
                 : jsonMapper.writeValueAsString(accumulator.citations());
 
-        return conversationService.addMessage(
+        String contextStatsJson = accumulator.contextStats() == null
+                ? null
+                : jsonMapper.writeValueAsString(accumulator.contextStats());
+
+        ChatMessage saved = conversationService.addMessage(
                 conversationId,
                 new CreateMessageRequest(
                         "ASSISTANT",
@@ -197,10 +216,25 @@ public class AgentStreamingService {
                         accumulator.skillName(),
                         toolsJson,
                         citationsJson,
-                        null,
+                        contextStatsJson,
                         accumulator.elapsedMillis()
                 )
         );
+
+        JsonNode contextUpdate = accumulator.contextUpdate();
+        if (contextUpdate != null && contextUpdate.isObject()) {
+            JsonNode summary = contextUpdate.get("summary");
+            JsonNode count = contextUpdate.get("summarized_message_count");
+            if (summary != null && summary.isTextual()
+                    && count != null && count.isIntegralNumber()) {
+                conversationService.updateContextSummary(
+                        conversationId,
+                        summary.asText(),
+                        count.asInt()
+                );
+            }
+        }
+        return saved;
     }
 
     private void consumeSse(InputStream body, SseConsumer consumer) throws Exception {
@@ -310,6 +344,8 @@ public class AgentStreamingService {
         private final StringBuilder answer = new StringBuilder();
         private final Set<String> toolCalls = new LinkedHashSet<>();
         private JsonNode citations;
+        private JsonNode contextStats;
+        private JsonNode contextUpdate;
         private String taskRoute;
         private String skillName;
         private boolean terminalSeen;
@@ -363,6 +399,14 @@ public class AgentStreamingService {
             if (doneCitations != null && doneCitations.isArray()) {
                 citations = doneCitations.deepCopy();
             }
+            JsonNode doneContextStats = data.get("context_stats");
+            if (doneContextStats != null && doneContextStats.isObject()) {
+                contextStats = doneContextStats.deepCopy();
+            }
+            JsonNode doneContextUpdate = data.get("context_update");
+            if (doneContextUpdate != null && doneContextUpdate.isObject()) {
+                contextUpdate = doneContextUpdate.deepCopy();
+            }
             JsonNode doneTools = data.get("tool_calls");
             if (doneTools != null && doneTools.isArray()) {
                 toolCalls.clear();
@@ -385,6 +429,14 @@ public class AgentStreamingService {
 
         private JsonNode citations() {
             return citations;
+        }
+
+        private JsonNode contextStats() {
+            return contextStats;
+        }
+
+        private JsonNode contextUpdate() {
+            return contextUpdate;
         }
 
         private String taskRoute() {
